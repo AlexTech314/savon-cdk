@@ -4,6 +4,7 @@ import Philosophy from "@/components/Philosophy";
 import Approach from "@/components/Approach";
 import ContactCTA from "@/components/ContactCTA";
 import Footer from "@/components/Footer";
+import DebugPreviewSwitcher from "@/components/DebugPreviewSwitcher";
 
 const Index = () => {
   return (
@@ -16,6 +17,7 @@ const Index = () => {
         <ContactCTA />
       </main>
       <Footer />
+      <DebugPreviewSwitcher />
     </div>
   );
 };

@@ -9,6 +9,12 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    fs: {
+      // Allow serving files from the dummy-data folder
+      allow: [".", "../dummy-data"],
+    },
+  },
   build: {
     outDir: "dist",
     sourcemap: false,

@@ -9,6 +9,10 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    fs: {
+      // Allow serving files from the dummy-data folder
+      allow: [".", "../dummy-data"],
+    },
   },
   plugins: [
     react(),

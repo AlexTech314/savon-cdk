@@ -28,7 +28,7 @@ export default function App() {
   // Resolve preview ID on mount
   useEffect(() => {
     async function resolveId() {
-      // 1. Check query param first (iframe mode)
+      // 1. Check query param (iframe mode)
       const params = new URLSearchParams(window.location.search);
       const idParam = params.get("id");
 
@@ -41,10 +41,10 @@ export default function App() {
       // 2. Check for custom domain (production mode)
       const hostname = window.location.hostname;
       
-      // Skip domain lookup for localhost/dev
+      // Skip domain lookup for localhost/dev - default to first business
       if (hostname === "localhost" || hostname === "127.0.0.1") {
-        // Default to a test ID in development
-        setPreviewId("nyc-plumber");
+        // Default to a test ID in development (use any slug from the CSV)
+        setPreviewId("miu-co-new-york-new-york-city");
         setIsResolvingId(false);
         return;
       }
