@@ -44,7 +44,7 @@ export default function App() {
       // Skip domain lookup for localhost/dev - default to first business
       if (hostname === "localhost" || hostname === "127.0.0.1") {
         // Default to a test ID in development (use any slug from the CSV)
-        setPreviewId("miu-co-new-york-new-york-city");
+        setPreviewId("elite-bookkeeping-solutions-brooklyn-long-island");
         setIsResolvingId(false);
         return;
       }

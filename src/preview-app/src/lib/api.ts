@@ -1,5 +1,5 @@
 // Preview API types and data fetching
-import businessesCsv from "../../../dummy-data/businesses_1767584099710.csv?raw";
+import businessesCsv from "../../../dummy-data/businesses_1767585762213.csv?raw";
 
 export interface PreviewData {
   id: string;
@@ -62,7 +62,7 @@ export interface PreviewData {
     tagline: string;
     headline: string;
     subheadline: string;
-    reviews: { text: string; rating: number; author: string }[];
+    reviews: { text: string; rating: number; author: string; url?: string }[];
   };
   emergencyCta: {
     headline: string;
@@ -86,6 +86,7 @@ export interface PreviewData {
 // ============================================
 
 interface CsvRow {
+  // Core business info
   place_id: string;
   friendly_slug: string;
   state: string;
@@ -112,10 +113,40 @@ interface CsvRow {
   country: string;
   international_phone: string;
   primary_type: string;
+  // Pre-generated copy
+  copy_hero_headline: string;
+  copy_hero_subheadline: string;
+  copy_hero_primary_cta: string;
+  copy_hero_secondary_cta: string;
+  copy_hero_trust_badges: string;
+  copy_services_tagline: string;
+  copy_services_headline: string;
+  copy_services_subheadline: string;
+  copy_services_items: string;
+  copy_why_tagline: string;
+  copy_why_headline: string;
+  copy_why_benefits: string;
+  copy_area_headline: string;
+  copy_area_hours_headline: string;
+  copy_area_hours_subtext: string;
+  copy_area_phone_headline: string;
+  copy_emergency_headline: string;
+  copy_emergency_subheadline: string;
+  copy_emergency_cta: string;
+  copy_contact_tagline: string;
+  copy_contact_trust_badges: string;
+  copy_contact_serving_note: string;
+  copy_seo_title: string;
+  copy_seo_description: string;
+  copy_seo_keywords: string;
+  copy_seo_schema_type: string;
+  copy_theme_primary: string;
+  copy_theme_primary_dark: string;
+  copy_theme_accent: string;
+  copy_theme_accent_hover: string;
 }
 
 function parseCSV(csvText: string): CsvRow[] {
-  // Split CSV into logical lines (handling multi-line quoted fields)
   const logicalLines = splitCsvIntoLogicalLines(csvText);
   if (logicalLines.length < 2) return [];
 
@@ -142,7 +173,6 @@ function parseCSV(csvText: string): CsvRow[] {
   return rows;
 }
 
-// Split CSV text into logical lines, respecting quoted multi-line fields
 function splitCsvIntoLogicalLines(csvText: string): string[] {
   const lines: string[] = [];
   let current = "";
@@ -152,7 +182,6 @@ function splitCsvIntoLogicalLines(csvText: string): string[] {
     const char = csvText[i];
 
     if (char === '"') {
-      // Check for escaped quote
       if (inQuotes && csvText[i + 1] === '"') {
         current += '""';
         i++;
@@ -164,14 +193,12 @@ function splitCsvIntoLogicalLines(csvText: string): string[] {
       lines.push(current);
       current = "";
     } else if (char === "\r") {
-      // Skip carriage returns
       continue;
     } else {
       current += char;
     }
   }
 
-  // Don't forget the last line
   if (current.trim()) {
     lines.push(current);
   }
@@ -204,241 +231,6 @@ function parseCSVLine(line: string): string[] {
 
   result.push(current);
   return result;
-}
-
-// ============================================
-// BUSINESS TYPE CONFIGURATIONS
-// ============================================
-
-interface BusinessTypeConfig {
-  theme: PreviewData["theme"];
-  schemaType: string;
-  keywords: string[];
-  services: { icon: string; title: string; description: string }[];
-  benefits: { icon: string; title: string; description: string }[];
-  trustBadges: string[];
-  heroHeadline: (businessName: string, city: string) => string;
-  heroSubheadline: string;
-  primaryCta: (phone: string) => string;
-  secondaryCta: string;
-  emergencyHeadline: string;
-  emergencySubheadline: string;
-}
-
-const businessTypeConfigs: Record<string, BusinessTypeConfig> = {
-  plumber: {
-    theme: {
-      primary: "224 64% 33%",
-      primaryDark: "224 71% 21%",
-      accent: "25 95% 53%",
-      accentHover: "25 95% 45%",
-      background: "210 40% 98%",
-      foreground: "222 47% 11%",
-      graySection: "220 14% 96%",
-      headingFont: "Inter",
-      bodyFont: "Inter",
-    },
-    schemaType: "Plumber",
-    keywords: ["plumber", "plumbing", "drain cleaning", "sewer repair", "water heater", "emergency plumber"],
-    services: [
-      { icon: "Wrench", title: "Emergency Plumbing Repairs", description: "24/7 availability for burst pipes, leaks, and all urgent plumbing issues. We respond fast when you need us most." },
-      { icon: "Droplets", title: "Drain Cleaning & Unclogging", description: "Professional cleaning for kitchen sinks, bathroom drains, and main lines. Say goodbye to stubborn clogs." },
-      { icon: "PipetteIcon", title: "Sewer Line Repair & Replacement", description: "Advanced trenchless technology and camera inspections for efficient sewer solutions with minimal disruption." },
-      { icon: "Flame", title: "Water Heater Services", description: "Expert installation, repair, and maintenance for all types of water heaters. Never run out of hot water." },
-      { icon: "Settings", title: "Pipe Installation & Repair", description: "New construction, repiping, and leak detection services. Quality materials and expert craftsmanship." },
-      { icon: "Bath", title: "Bathroom & Kitchen Plumbing", description: "Complete fixture installation and renovations. Transform your spaces with professional plumbing work." },
-    ],
-    benefits: [
-      { icon: "Clock", title: "24/7 Emergency Service", description: "Plumbing emergencies don't wait, and neither do we. Available around the clock, every day of the year." },
-      { icon: "Shield", title: "Licensed & Insured", description: "Fully licensed, bonded, and insured for your complete peace of mind and protection." },
-      { icon: "Zap", title: "Fast Response Time", description: "We pride ourselves on quick arrival times. Most calls answered within 60 minutes." },
-      { icon: "Award", title: "Experienced Professionals", description: "Our team of certified master plumbers brings decades of combined experience." },
-      { icon: "DollarSign", title: "Upfront Pricing", description: "No hidden fees or surprise charges. We provide clear quotes before any work begins." },
-      { icon: "ThumbsUp", title: "Satisfaction Guaranteed", description: "We stand behind our work with a 100% satisfaction guarantee on all services." },
-    ],
-    trustBadges: ["Available 24/7", "Licensed & Insured", "Same-Day Service"],
-    heroHeadline: (name, city) => `24/7 Emergency Plumbing Services in ${city}`,
-    heroSubheadline: "Fast, Reliable Solutions for All Your Plumbing & Sewer Needs",
-    primaryCta: (phone) => `Call Now ${phone}`,
-    secondaryCta: "Get Free Quote",
-    emergencyHeadline: "Plumbing Emergency?",
-    emergencySubheadline: "Don't wait – our expert plumbers are standing by 24/7 to help you with any plumbing crisis.",
-  },
-
-  hvac: {
-    theme: {
-      primary: "210 65% 45%",
-      primaryDark: "210 70% 30%",
-      accent: "0 75% 55%",
-      accentHover: "0 75% 45%",
-      background: "210 40% 98%",
-      foreground: "210 30% 15%",
-      graySection: "210 15% 96%",
-      headingFont: "Inter",
-      bodyFont: "Inter",
-    },
-    schemaType: "HVACBusiness",
-    keywords: ["HVAC", "air conditioning", "heating", "AC repair", "furnace repair", "hvac technician"],
-    services: [
-      { icon: "Thermometer", title: "AC Repair & Service", description: "Fast, reliable air conditioning repair. We diagnose and fix all makes and models to restore your comfort quickly." },
-      { icon: "Flame", title: "Heating Repair & Installation", description: "Furnace repairs, heat pump service, and new heating system installations to keep you warm all winter." },
-      { icon: "Wind", title: "System Installation", description: "Expert installation of new HVAC systems. We help you choose the right equipment for your home and budget." },
-      { icon: "Settings", title: "Preventive Maintenance", description: "Regular tune-ups extend equipment life and prevent costly breakdowns. Join our maintenance plan and save." },
-      { icon: "Home", title: "Indoor Air Quality", description: "Air purifiers, humidifiers, and duct cleaning to improve the air your family breathes." },
-      { icon: "Zap", title: "Emergency Service", description: "HVAC emergency? We're available 24/7 for urgent repairs. No extra charge for nights or weekends." },
-    ],
-    benefits: [
-      { icon: "Clock", title: "Same-Day Service", description: "We understand urgency. Most service calls completed the same day you call." },
-      { icon: "Shield", title: "Licensed Technicians", description: "All technicians are NATE-certified, background-checked, and drug-tested for your peace of mind." },
-      { icon: "DollarSign", title: "Upfront Pricing", description: "Know the cost before we start. No hidden fees, no surprises on your bill." },
-      { icon: "Award", title: "Satisfaction Guarantee", description: "Not happy? We'll make it right. Your complete satisfaction is our top priority." },
-      { icon: "CreditCard", title: "Flexible Financing", description: "New system? We offer 0% financing options to fit any budget. Easy approval." },
-      { icon: "ThumbsUp", title: "5-Star Rated", description: "Hundreds of five-star reviews. See why homeowners choose us." },
-    ],
-    trustBadges: ["24/7 Emergency Service", "Licensed & Insured", "Financing Available"],
-    heroHeadline: (name, city) => `Keep Your Home Comfortable Year-Round in ${city}`,
-    heroSubheadline: "Expert HVAC Installation, Repair & Maintenance",
-    primaryCta: (phone) => `Call Now ${phone}`,
-    secondaryCta: "Schedule Service",
-    emergencyHeadline: "AC or Heater Not Working?",
-    emergencySubheadline: "Don't sweat it! Our technicians are standing by 24/7 to restore your comfort fast.",
-  },
-
-  accountant: {
-    theme: {
-      primary: "152 45% 28%",
-      primaryDark: "152 50% 18%",
-      accent: "45 93% 47%",
-      accentHover: "45 93% 40%",
-      background: "40 33% 98%",
-      foreground: "152 30% 15%",
-      graySection: "40 20% 96%",
-      headingFont: "Inter",
-      bodyFont: "Inter",
-    },
-    schemaType: "AccountingService",
-    keywords: ["CPA", "accountant", "tax preparation", "bookkeeping", "financial planning", "tax services"],
-    services: [
-      { icon: "FileText", title: "Individual Tax Preparation", description: "Maximize your refund with expert personal tax preparation. We handle everything from simple returns to complex situations." },
-      { icon: "Building", title: "Business Tax Services", description: "Strategic tax planning and preparation for businesses of all sizes. Minimize liability and stay compliant." },
-      { icon: "Calculator", title: "Bookkeeping & Payroll", description: "Monthly bookkeeping, payroll processing, and financial reporting to keep your business running smoothly." },
-      { icon: "TrendingUp", title: "Financial Planning", description: "Comprehensive financial planning and advisory services to help you achieve your long-term goals." },
-      { icon: "Shield", title: "IRS Representation", description: "Expert representation for audits, appeals, and tax disputes. We protect your interests with the IRS." },
-      { icon: "Briefcase", title: "Business Formation", description: "LLC, S-Corp, and business entity setup. Choose the right structure for tax efficiency and liability protection." },
-    ],
-    benefits: [
-      { icon: "Award", title: "Licensed CPAs", description: "Our team of certified public accountants brings expertise and credentials you can trust." },
-      { icon: "Clock", title: "Year-Round Support", description: "We're here for you beyond tax season. Get help whenever you need financial guidance." },
-      { icon: "Users", title: "Personalized Service", description: "Every client receives individualized attention and strategies tailored to their unique situation." },
-      { icon: "Lock", title: "Secure & Confidential", description: "Your financial data is protected with bank-level security and strict confidentiality protocols." },
-      { icon: "DollarSign", title: "Transparent Pricing", description: "No surprises. Clear, upfront pricing for all services with no hidden fees." },
-      { icon: "Zap", title: "Fast Turnaround", description: "Efficient processing without sacrificing accuracy. Get your returns filed quickly." },
-    ],
-    trustBadges: ["Licensed CPA", "20+ Years Experience", "Free Initial Consultation"],
-    heroHeadline: (name, city) => `Expert Tax & Accounting Services in ${city}`,
-    heroSubheadline: "Personalized Financial Solutions for Individuals and Businesses",
-    primaryCta: () => "Schedule Consultation",
-    secondaryCta: "View Services",
-    emergencyHeadline: "Tax Season Approaching?",
-    emergencySubheadline: "Don't wait until the last minute. Schedule your consultation today and get ahead of your tax obligations.",
-  },
-
-  electrician: {
-    theme: {
-      primary: "45 90% 45%",
-      primaryDark: "45 95% 35%",
-      accent: "220 70% 50%",
-      accentHover: "220 70% 42%",
-      background: "45 30% 98%",
-      foreground: "45 30% 12%",
-      graySection: "45 15% 96%",
-      headingFont: "Inter",
-      bodyFont: "Inter",
-    },
-    schemaType: "Electrician",
-    keywords: ["electrician", "electrical repair", "wiring", "electrical installation", "panel upgrade", "lighting"],
-    services: [
-      { icon: "Zap", title: "Electrical Repairs", description: "Fast and reliable electrical repairs for outlets, switches, circuits, and more. Safety is our priority." },
-      { icon: "Lightbulb", title: "Lighting Installation", description: "Interior and exterior lighting installation, including recessed lights, chandeliers, and landscape lighting." },
-      { icon: "Settings", title: "Panel Upgrades", description: "Upgrade your electrical panel to meet modern demands. Increase capacity and improve safety." },
-      { icon: "Home", title: "Whole-Home Rewiring", description: "Complete rewiring for older homes. Bring your electrical system up to code with modern wiring." },
-      { icon: "Shield", title: "Safety Inspections", description: "Comprehensive electrical safety inspections. Identify potential hazards before they become problems." },
-      { icon: "Battery", title: "Generator Installation", description: "Backup power solutions for your home. Never be left in the dark during outages." },
-    ],
-    benefits: [
-      { icon: "Clock", title: "Same-Day Service", description: "Electrical issues can't wait. We offer same-day service for most repair calls." },
-      { icon: "Shield", title: "Licensed & Insured", description: "Fully licensed master electricians with comprehensive insurance coverage." },
-      { icon: "Award", title: "Code Compliant", description: "All work meets or exceeds local electrical codes for safety and compliance." },
-      { icon: "DollarSign", title: "Upfront Pricing", description: "Know exactly what you'll pay before work begins. No hidden charges." },
-      { icon: "ThumbsUp", title: "Satisfaction Guaranteed", description: "We stand behind every job with our satisfaction guarantee." },
-      { icon: "Zap", title: "Fast Response", description: "Quick response times for emergencies. Your safety is our priority." },
-    ],
-    trustBadges: ["Licensed Master Electrician", "Same-Day Service", "Free Estimates"],
-    heroHeadline: (name, city) => `Professional Electrical Services in ${city}`,
-    heroSubheadline: "Safe, Reliable Electrical Solutions for Your Home or Business",
-    primaryCta: (phone) => `Call Now ${phone}`,
-    secondaryCta: "Get Free Quote",
-    emergencyHeadline: "Electrical Emergency?",
-    emergencySubheadline: "Don't risk it. Our licensed electricians are ready to help 24/7 for urgent electrical issues.",
-  },
-
-  default: {
-    theme: {
-      primary: "220 60% 45%",
-      primaryDark: "220 65% 32%",
-      accent: "30 90% 50%",
-      accentHover: "30 90% 42%",
-      background: "220 25% 98%",
-      foreground: "220 30% 12%",
-      graySection: "220 15% 96%",
-      headingFont: "Inter",
-      bodyFont: "Inter",
-    },
-    schemaType: "LocalBusiness",
-    keywords: ["professional services", "local business", "quality service"],
-    services: [
-      { icon: "Star", title: "Quality Service", description: "We deliver exceptional service tailored to your specific needs with attention to detail." },
-      { icon: "Users", title: "Personalized Approach", description: "Every client receives individualized attention and customized solutions." },
-      { icon: "Award", title: "Expert Team", description: "Our experienced professionals bring years of expertise to every project." },
-      { icon: "Clock", title: "Timely Delivery", description: "We respect your time and deliver on schedule without compromising quality." },
-      { icon: "Shield", title: "Trusted & Reliable", description: "Count on us for consistent, dependable service every time." },
-      { icon: "ThumbsUp", title: "Satisfaction Guaranteed", description: "Your satisfaction is our top priority. We stand behind our work." },
-    ],
-    benefits: [
-      { icon: "Award", title: "Experienced Professionals", description: "Our team brings years of industry experience and expertise to every project." },
-      { icon: "Clock", title: "Prompt Service", description: "We value your time and respond quickly to all inquiries and service requests." },
-      { icon: "Shield", title: "Licensed & Insured", description: "Fully licensed and insured for your complete peace of mind." },
-      { icon: "DollarSign", title: "Fair Pricing", description: "Transparent, competitive pricing with no hidden fees or surprises." },
-      { icon: "Users", title: "Customer Focused", description: "We put our customers first and tailor our services to your unique needs." },
-      { icon: "ThumbsUp", title: "Quality Guaranteed", description: "We stand behind our work with a satisfaction guarantee on all services." },
-    ],
-    trustBadges: ["Licensed & Insured", "Quality Service", "Free Consultation"],
-    heroHeadline: (name, city) => `Professional ${name} in ${city}`,
-    heroSubheadline: "Quality Service You Can Trust",
-    primaryCta: (phone) => phone ? `Call ${phone}` : "Contact Us",
-    secondaryCta: "Learn More",
-    emergencyHeadline: "Need Assistance?",
-    emergencySubheadline: "Our team is ready to help. Contact us today to discuss your needs.",
-  },
-};
-
-function getBusinessTypeConfig(businessType: string): BusinessTypeConfig {
-  const normalizedType = businessType.toLowerCase();
-
-  if (normalizedType.includes("plumb") || normalizedType.includes("sewer") || normalizedType.includes("drain")) {
-    return businessTypeConfigs.plumber;
-  }
-  if (normalizedType.includes("hvac") || normalizedType.includes("heating") || normalizedType.includes("cooling") || normalizedType.includes("air condition")) {
-    return businessTypeConfigs.hvac;
-  }
-  if (normalizedType.includes("account") || normalizedType.includes("cpa") || normalizedType.includes("tax") || normalizedType.includes("bookkeep") || normalizedType.includes("financial")) {
-    return businessTypeConfigs.accountant;
-  }
-  if (normalizedType.includes("electric")) {
-    return businessTypeConfigs.electrician;
-  }
-
-  return businessTypeConfigs.default;
 }
 
 // ============================================
@@ -502,10 +294,10 @@ function formatHoursDisplay(hours: { day: string; time: string; isClosed: boolea
   return openDays.length === 7 ? "Open 7 Days a Week" : `${openDays.length} Days a Week`;
 }
 
-function parseReviews(reviewsString: string): { text: string; rating: number; author: string }[] {
+function parseReviews(reviewsString: string): { text: string; rating: number; author: string; url?: string }[] {
   if (!reviewsString) return [];
 
-  const reviews: { text: string; rating: number; author: string }[] = [];
+  const reviews: { text: string; rating: number; author: string; url?: string }[] = [];
   const reviewParts = reviewsString.split(" | ");
 
   for (const part of reviewParts) {
@@ -513,22 +305,23 @@ function parseReviews(reviewsString: string): { text: string; rating: number; au
     const ratingMatch = part.match(/\[(\d)★\]/);
     const rating = ratingMatch ? parseInt(ratingMatch[1]) : 5;
 
-    // Extract author from — Author Name pattern
-    const authorMatch = part.match(/— ([^(]+)/);
+    // Extract author and URL from — Author Name (URL) pattern
+    const authorMatch = part.match(/— ([^(]+)\s*\(([^)]+)\)/);
     const author = authorMatch ? authorMatch[1].trim() : "Verified Customer";
+    const url = authorMatch ? authorMatch[2].trim() : undefined;
 
     // Extract text (everything in quotes)
     const textMatch = part.match(/"([^"]+)"/);
     let text = textMatch ? textMatch[1] : part;
 
-    // Clean up text
+    // Clean up text - truncate if too long
     text = text.substring(0, 300);
     if (text.length === 300) {
       text = text.substring(0, text.lastIndexOf(" ")) + "...";
     }
 
     if (text.length > 20) {
-      reviews.push({ text, rating, author });
+      reviews.push({ text, rating, author, url });
     }
   }
 
@@ -549,8 +342,22 @@ function extractZipFromAddress(address: string, zip: string): string {
   return zipMatch ? zipMatch[1] : "";
 }
 
+function parseJsonArray<T>(jsonString: string, fallback: T[]): T[] {
+  if (!jsonString) return fallback;
+  try {
+    return JSON.parse(jsonString) as T[];
+  } catch {
+    return fallback;
+  }
+}
+
+function parseTrustBadges(badgesString: string): string[] {
+  if (!badgesString) return [];
+  // Trust badges are pipe-separated in the CSV
+  return badgesString.split(" | ").map(b => b.trim()).filter(Boolean);
+}
+
 function transformRowToPreviewData(row: CsvRow): PreviewData {
-  const config = getBusinessTypeConfig(row.business_type);
   const hours = parseHours(row.hours);
   const hoursDisplay = formatHoursDisplay(hours);
   const reviews = parseReviews(row.reviews);
@@ -560,6 +367,24 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
   const city = row.city || "Your City";
   const state = row.state || "";
   const phone = row.phone || "";
+
+  // Parse services and benefits from JSON in CSV
+  const defaultServices = [
+    { icon: "Star", title: "Quality Service", description: "We deliver exceptional service tailored to your specific needs." },
+    { icon: "Users", title: "Expert Team", description: "Our experienced professionals bring expertise to every project." },
+    { icon: "Clock", title: "Timely Delivery", description: "We respect your time and deliver on schedule." },
+  ];
+
+  const defaultBenefits = [
+    { icon: "Award", title: "Experienced Professionals", description: "Years of industry experience and expertise." },
+    { icon: "Shield", title: "Licensed & Insured", description: "Fully licensed and insured for your peace of mind." },
+    { icon: "ThumbsUp", title: "Quality Guaranteed", description: "We stand behind our work with a satisfaction guarantee." },
+  ];
+
+  const services = parseJsonArray(row.copy_services_items, defaultServices);
+  const benefits = parseJsonArray(row.copy_why_benefits, defaultBenefits);
+  const heroTrustBadges = parseTrustBadges(row.copy_hero_trust_badges);
+  const contactTrustBadges = parseTrustBadges(row.copy_contact_trust_badges);
 
   return {
     id: row.place_id,
@@ -576,36 +401,46 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
     hours,
     heroImage: getFirstPhoto(row.photos),
     seo: {
-      title: `${row.business_name} | ${row.business_type} in ${city}`,
-      description: `${row.business_name} is your trusted ${row.business_type.toLowerCase()} in ${city}. ${config.keywords.slice(0, 3).join(", ")}. Call ${phone || "today"} for professional service!`,
-      keywords: [...config.keywords, city, state].filter(Boolean).join(", "),
-      schemaType: config.schemaType,
+      title: row.copy_seo_title || `${row.business_name} | ${row.business_type} in ${city}`,
+      description: row.copy_seo_description || `${row.business_name} is your trusted ${row.business_type.toLowerCase()} in ${city}. Call ${phone || "today"} for professional service!`,
+      keywords: row.copy_seo_keywords || `${row.business_type.toLowerCase()}, ${city}, ${state}`,
+      schemaType: row.copy_seo_schema_type || "LocalBusiness",
     },
-    theme: config.theme,
+    theme: {
+      primary: row.copy_theme_primary || "220 60% 45%",
+      primaryDark: row.copy_theme_primary_dark || "220 65% 32%",
+      accent: row.copy_theme_accent || "30 90% 50%",
+      accentHover: row.copy_theme_accent_hover || "30 90% 42%",
+      background: "210 40% 98%",
+      foreground: "222 47% 11%",
+      graySection: "220 14% 96%",
+      headingFont: "Inter",
+      bodyFont: "Inter",
+    },
     hero: {
-      headline: config.heroHeadline(row.business_name, city),
-      subheadline: config.heroSubheadline,
-      primaryCta: config.primaryCta(phone),
-      secondaryCta: config.secondaryCta,
-      trustBadges: config.trustBadges,
+      headline: row.copy_hero_headline || `Professional ${row.business_type} in ${city}`,
+      subheadline: row.copy_hero_subheadline || "Quality Service You Can Trust",
+      primaryCta: row.copy_hero_primary_cta || (phone ? `Call ${phone}` : "Contact Us"),
+      secondaryCta: row.copy_hero_secondary_cta || "Learn More",
+      trustBadges: heroTrustBadges.length > 0 ? heroTrustBadges : ["Licensed & Insured", "Quality Service", "Free Consultation"],
     },
     servicesSection: {
-      tagline: "WHAT WE OFFER",
-      headline: "Our Expert Services",
-      subheadline: `From routine maintenance to complex solutions, ${row.business_name} delivers top-quality service throughout ${city}.`,
-      services: config.services,
+      tagline: row.copy_services_tagline || "OUR SERVICES",
+      headline: row.copy_services_headline || "Our Expert Services",
+      subheadline: row.copy_services_subheadline || `${row.business_name} delivers top-quality service throughout ${city}.`,
+      services,
     },
     whyChooseUs: {
-      tagline: "WHY CHOOSE US",
-      headline: `Your Trusted ${city} ${row.business_type}`,
-      benefits: config.benefits,
+      tagline: row.copy_why_tagline || "WHY CHOOSE US",
+      headline: row.copy_why_headline || `Your Trusted ${city} ${row.business_type}`,
+      benefits,
     },
     serviceArea: {
-      headline: `Serving ${city} & Surrounding Areas`,
+      headline: row.copy_area_headline || `Serving ${city} & Surrounding Areas`,
       addressDisplay: row.street ? `${row.street}, ${city}${state ? `, ${state}` : ""}` : row.address,
-      hoursHeadline: hoursDisplay,
-      hoursSubtext: hours.some(h => h.time.toLowerCase().includes("24")) ? "Emergency services available around the clock" : "Call to schedule an appointment",
-      phoneHeadline: phone ? "Call Us Today" : "Contact Us",
+      hoursHeadline: row.copy_area_hours_headline || hoursDisplay,
+      hoursSubtext: row.copy_area_hours_subtext || (hours.some(h => h.time.toLowerCase().includes("24")) ? "Emergency services available around the clock" : "Call to schedule an appointment"),
+      phoneHeadline: row.copy_area_phone_headline || (phone ? "Call Today" : "Contact Us"),
     },
     reviewsSection: {
       tagline: "TESTIMONIALS",
@@ -618,21 +453,21 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
       ],
     },
     emergencyCta: {
-      headline: config.emergencyHeadline,
-      subheadline: config.emergencySubheadline,
-      ctaText: phone ? `Call ${phone} Now` : "Contact Us Now",
+      headline: row.copy_emergency_headline || "Need Assistance?",
+      subheadline: row.copy_emergency_subheadline || "Our team is ready to help. Contact us today to discuss your needs.",
+      ctaText: row.copy_emergency_cta || (phone ? `Call ${phone} Now` : "Contact Us Now"),
     },
     contactSection: {
-      tagline: "CONTACT US",
+      tagline: row.copy_contact_tagline || "GET STARTED",
       headline: row.business_name,
-      trustBadges: [
+      trustBadges: contactTrustBadges.length > 0 ? contactTrustBadges : [
         "Licensed & Insured",
         "Professional Team",
         "Quality Guaranteed",
         "Free Estimates",
         `Serving ${city}`,
       ],
-      servingNote: `Proudly serving ${city}${state ? `, ${state}` : ""} and surrounding areas with professional ${row.business_type.toLowerCase()} services.`,
+      servingNote: row.copy_contact_serving_note || `Proudly serving ${city}${state ? `, ${state}` : ""} and surrounding areas with professional ${row.business_type.toLowerCase()} services.`,
     },
     footer: {
       copyright: `© ${new Date().getFullYear()} ${row.business_name}. All rights reserved.`,
@@ -683,24 +518,18 @@ function loadData(): { dataById: Map<string, PreviewData>; slugToId: Map<string,
 
 /**
  * Fetch preview data by ID (place_id) or friendly_slug
- * 
- * In development: uses CSV data
- * In production: calls real API endpoint if configured
  */
 export async function fetchPreviewData(idOrSlug: string): Promise<PreviewData> {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "";
   const useMockData = import.meta.env.DEV || !apiBaseUrl;
 
-  // Use CSV data in development or if no API URL is configured
   if (useMockData) {
-    await new Promise((resolve) => setTimeout(resolve, 100)); // Simulate network
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const { dataById, slugToId } = loadData();
 
-    // Try to find by place_id first
     let data = dataById.get(idOrSlug);
 
-    // If not found, try by friendly_slug
     if (!data) {
       const placeId = slugToId.get(idOrSlug);
       if (placeId) {
@@ -715,7 +544,6 @@ export async function fetchPreviewData(idOrSlug: string): Promise<PreviewData> {
     return data;
   }
 
-  // Production: call real API
   const response = await fetch(`${apiBaseUrl}/api/preview/${idOrSlug}`);
 
   if (!response.ok) {
@@ -726,7 +554,7 @@ export async function fetchPreviewData(idOrSlug: string): Promise<PreviewData> {
 }
 
 /**
- * Get all available business IDs and slugs (for development/testing)
+ * Get all available business IDs and slugs
  */
 export function getAvailableBusinessIds(): { placeId: string; slug: string; name: string }[] {
   const { dataById, slugToId } = loadData();
@@ -745,12 +573,10 @@ export function getAvailableBusinessIds(): { placeId: string; slug: string; name
 
 /**
  * Lookup preview ID by domain
- * Used when the app is deployed to a custom domain
  */
 export async function fetchIdByDomain(domain: string): Promise<string | null> {
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "";
 
-  // In dev mode, skip domain lookup
   if (import.meta.env.DEV) {
     return null;
   }

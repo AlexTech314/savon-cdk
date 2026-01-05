@@ -10,6 +10,7 @@ interface ReviewsProps {
       text: string;
       rating: number;
       author: string;
+      url?: string;
     }[];
   };
   rating: number;
@@ -75,9 +76,20 @@ export function Reviews({ reviewsSection, rating, ratingCount }: ReviewsProps) {
                 </p>
 
                 {/* Author */}
-                <p className="text-muted-foreground font-medium">
-                  — {review.author}
-                </p>
+                {review.url ? (
+                  <a
+                    href={review.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground font-medium hover:text-accent transition-colors"
+                  >
+                    — {review.author} ↗
+                  </a>
+                ) : (
+                  <p className="text-muted-foreground font-medium">
+                    — {review.author}
+                  </p>
+                )}
               </CardContent>
             </Card>
           ))}
