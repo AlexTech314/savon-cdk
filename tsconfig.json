@@ -21,12 +21,20 @@
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
     "skipLibCheck": true,
+    "outDir": "./cdk.out",
+    "rootDir": ".",
     "typeRoots": [
       "./node_modules/@types"
     ]
   },
+  "include": [
+    "bin/**/*.ts",
+    "lib/**/*.ts"
+  ],
   "exclude": [
     "node_modules",
-    "cdk.out"
+    "cdk.out",
+    "src/**/*",
+    "test/**/*"
   ]
 }

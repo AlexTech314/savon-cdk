@@ -1,20 +1,37 @@
 #!/usr/bin/env node
-import * as cdk from 'aws-cdk-lib/core';
-import { SavonCdkStack } from '../lib/savon-cdk-stack';
+import * as cdk from 'aws-cdk-lib';
+import { PipelineStack } from '../lib/pipeline-stack';
+import { DnsStack } from '../lib/stacks/dns-stack';
 
 const app = new cdk.App();
-new SavonCdkStack(app, 'SavonCdkStack', {
-  /* If you don't specify 'env', this stack will be environment-agnostic.
-   * Account/Region-dependent features and context lookups will not work,
-   * but a single synthesized template can be deployed anywhere. */
 
-  /* Uncomment the next line to specialize this stack for the AWS Account
-   * and Region that are implied by the current CLI configuration. */
-  // env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION },
+// Account and region configuration
+const env = { 
+  account: '328174020207', 
+  region: 'us-east-1',  // ACM certs for CloudFront must be in us-east-1
+};
 
-  /* Uncomment the next line if you know exactly what Account and Region you
-   * want to deploy the stack to. */
-  // env: { account: '123456789012', region: 'us-east-1' },
+// ============================================================
+// DNS Stack - Deploy this FIRST, then configure GoDaddy
+// ============================================================
+// 
+// After deploying SavonDns:
+// 1. Look at the 'NameServers' output
+// 2. Update GoDaddy nameservers to those 4 values
+// 3. Wait 24-48 hours for propagation
+// 4. ACM certificate will auto-validate once DNS propagates
+//
+new DnsStack(app, 'SavonDns', { env });
 
-  /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
-});
+// ============================================================
+// Pipeline Stack - Deploy after DNS is configured
+// ============================================================
+//
+// Prerequisites:
+// 1. Create GitHub connection in AWS Console
+// 2. Set githubConnectionArn in cdk.context.json
+// 3. DNS must be configured and certificate issued
+//
+new PipelineStack(app, 'SavonPipeline', { env });
+
+app.synth();

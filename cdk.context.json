@@ -1,0 +1,19 @@
+{
+  "githubOwner": "AlexTech314",
+  "githubRepo": "savon-cdk",
+  "githubTokenSecretName": "GITHUB_TOKEN",
+  "hostedZoneId": "Z03712212Q6P09XXBNUOC",
+  "hostedZoneName": "savondesigns.com",
+  "certificateArn": "arn:aws:acm:us-east-1:328174020207:certificate/52f2678e-f5d7-4ebc-9ee4-a483d1e59277",
+  "availability-zones:account=328174020207:region=us-east-1": [
+    "us-east-1a",
+    "us-east-1b",
+    "us-east-1c",
+    "us-east-1d",
+    "us-east-1e",
+    "us-east-1f"
+  ],
+  "acknowledged-issue-numbers": [
+    34892
+  ]
+}
