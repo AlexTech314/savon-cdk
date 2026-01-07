@@ -1,5 +1,7 @@
 import { useState } from "react";
-import businessesCsv from "../../../dummy-data/businesses_1767585762213.csv?raw";
+
+// Stub component - CSV data removed for production build
+// This will be wired to the real API later
 
 interface BusinessEntry {
   place_id: string;
@@ -9,98 +11,8 @@ interface BusinessEntry {
   city: string;
 }
 
-// Split CSV text into logical lines, respecting quoted multi-line fields
-function splitCsvIntoLogicalLines(csvText: string): string[] {
-  const lines: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < csvText.length; i++) {
-    const char = csvText[i];
-
-    if (char === '"') {
-      if (inQuotes && csvText[i + 1] === '"') {
-        current += '""';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-        current += char;
-      }
-    } else if (char === "\n" && !inQuotes) {
-      lines.push(current);
-      current = "";
-    } else if (char === "\r") {
-      continue;
-    } else {
-      current += char;
-    }
-  }
-
-  if (current.trim()) {
-    lines.push(current);
-  }
-
-  return lines;
-}
-
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === "," && !inQuotes) {
-      result.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-  result.push(current);
-  return result;
-}
-
-function parseCSV(csvText: string): BusinessEntry[] {
-  const logicalLines = splitCsvIntoLogicalLines(csvText);
-  if (logicalLines.length < 2) return [];
-
-  const headers = parseCSVLine(logicalLines[0]);
-  const placeIdIdx = headers.indexOf("place_id");
-  const slugIdx = headers.indexOf("friendly_slug");
-  const nameIdx = headers.indexOf("business_name");
-  const typeIdx = headers.indexOf("business_type");
-  const cityIdx = headers.indexOf("city");
-
-  const entries: BusinessEntry[] = [];
-
-  for (let i = 1; i < logicalLines.length; i++) {
-    const line = logicalLines[i].trim();
-    if (!line) continue;
-
-    const values = parseCSVLine(line);
-    if (!values[placeIdIdx] || !values[nameIdx]) continue;
-
-    entries.push({
-      place_id: values[placeIdIdx] || "",
-      friendly_slug: values[slugIdx] || "",
-      business_name: values[nameIdx] || "",
-      business_type: values[typeIdx] || "",
-      city: values[cityIdx] || "",
-    });
-  }
-
-  return entries;
-}
-
-const businesses = parseCSV(businessesCsv);
+// Empty placeholder - will fetch from API in production
+const businesses: BusinessEntry[] = [];
 
 export default function DebugPreviewSwitcher() {
   const [isOpen, setIsOpen] = useState(false);
@@ -149,6 +61,11 @@ export default function DebugPreviewSwitcher() {
       </div>
 
       <div className="overflow-y-auto flex-1">
+        {filteredBusinesses.length === 0 && (
+          <div className="p-4 text-center text-zinc-500 text-sm">
+            No businesses loaded. Connect to API to fetch data.
+          </div>
+        )}
         {filteredBusinesses.map((business) => (
           <a
             key={business.place_id}
@@ -166,11 +83,6 @@ export default function DebugPreviewSwitcher() {
             </div>
           </a>
         ))}
-        {filteredBusinesses.length === 0 && (
-          <div className="p-4 text-center text-zinc-500 text-sm">
-            No businesses match your filter
-          </div>
-        )}
       </div>
 
       <div className="p-2 border-t border-zinc-700 bg-zinc-800 text-xs text-zinc-500 text-center">

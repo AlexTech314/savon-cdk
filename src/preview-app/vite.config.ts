@@ -10,10 +10,8 @@ export default defineConfig({
     },
   },
   server: {
-    fs: {
-      // Allow serving files from the dummy-data folder
-      allow: [".", "../dummy-data"],
-    },
+    host: "::",
+    port: 8081,
   },
   build: {
     outDir: "dist",

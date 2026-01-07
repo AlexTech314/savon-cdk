@@ -1,5 +1,5 @@
 // Preview API types and data fetching
-import businessesCsv from "../../../dummy-data/businesses_1767585762213.csv?raw";
+// CSV import removed - will use API in production
 
 export interface PreviewData {
   id: string;
@@ -491,20 +491,10 @@ function loadData(): { dataById: Map<string, PreviewData>; slugToId: Map<string,
     return { dataById: cachedData, slugToId: cachedSlugIndex };
   }
 
-  const rows = parseCSV(businessesCsv);
+  // CSV data removed - return empty maps
+  // In production, data will come from the API
   const dataById = new Map<string, PreviewData>();
   const slugToId = new Map<string, string>();
-
-  for (const row of rows) {
-    if (!row.place_id || !row.business_name) continue;
-
-    const previewData = transformRowToPreviewData(row);
-    dataById.set(row.place_id, previewData);
-
-    if (row.friendly_slug) {
-      slugToId.set(row.friendly_slug, row.place_id);
-    }
-  }
 
   cachedData = dataById;
   cachedSlugIndex = slugToId;
