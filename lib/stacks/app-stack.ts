@@ -5,6 +5,7 @@ import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
@@ -481,6 +482,40 @@ export class AppStack extends cdk.Stack {
       zone: hostedZone,
       recordName: 'admin-alpha',
       target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(adminDistribution)),
+    });
+
+    // ============================================================
+    // S3 Bucket Deployments with CloudFront Invalidation
+    // ============================================================
+
+    // Deploy Main UI to S3
+    new s3deploy.BucketDeployment(this, 'DeployUi', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../../src/ui/dist'))],
+      destinationBucket: uiBucket,
+      distribution: uiDistribution,
+      distributionPaths: ['/*'],
+      prune: true,
+      memoryLimit: 256,
+    });
+
+    // Deploy Preview App to S3
+    new s3deploy.BucketDeployment(this, 'DeployPreview', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../../src/preview-app/dist'))],
+      destinationBucket: previewBucket,
+      distribution: previewDistribution,
+      distributionPaths: ['/*'],
+      prune: true,
+      memoryLimit: 256,
+    });
+
+    // Deploy Admin Control Center to S3
+    new s3deploy.BucketDeployment(this, 'DeployAdmin', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '../../src/admin-app/dist'))],
+      destinationBucket: adminBucket,
+      distribution: adminDistribution,
+      distributionPaths: ['/*'],
+      prune: true,
+      memoryLimit: 256,
     });
 
     // ============================================================

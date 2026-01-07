@@ -1,0 +1,24 @@
+{
+  "name": "Savon Designs: Professional Web Design Studio",
+  "short_name": "Savon Designs",
+  "description": "Boutique web development agency crafting distinctive digital experiences for brands that refuse to blend in.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9f7f4",
+  "theme_color": "#c4694a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

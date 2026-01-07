@@ -41,8 +41,16 @@ export class PipelineStack extends cdk.Stack {
           }
         ),
         commands: [
+          // Install and build CDK project
           'npm ci',
           'npm run build',
+          
+          // Build UI apps (outputs to src/*/dist/)
+          'cd src/ui && npm ci && npm run build && cd ../..',
+          'cd src/preview-app && npm ci && npm run build && cd ../..',
+          'cd src/admin-app && npm ci && npm run build && cd ../..',
+          
+          // Synthesize CDK
           'npx cdk synth',
         ],
       }),
