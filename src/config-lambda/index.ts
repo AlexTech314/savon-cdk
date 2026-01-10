@@ -6,14 +6,17 @@ import {
   PutCommand, 
   DeleteCommand,
   BatchWriteCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
+import Anthropic from '@anthropic-ai/sdk';
 
 const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
 const TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
+const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
 interface Business {
   place_id: string;
@@ -65,6 +68,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // GET /businesses/export - CSV export
     if (routeKey === 'GET /businesses/export') {
       return await exportBusinesses();
+    }
+    
+    // POST /businesses/{place_id}/generate-copy - Generate preview copy for a business
+    if (routeKey === 'POST /businesses/{place_id}/generate-copy') {
+      return await generateCopy(pathParameters?.place_id!);
     }
     
     return response(404, { error: 'Not found' });
@@ -288,5 +296,299 @@ function response(
     },
     body: isString ? body : JSON.stringify(body),
   };
+}
+
+// ============================================
+// GENERATE COPY (LLM Preview Generation)
+// ============================================
+
+interface LandingPageCopy {
+  hero: {
+    headline: string;
+    subheadline: string;
+    primaryCtaText: string;
+    secondaryCtaText: string;
+    trustBadges: string[];
+  };
+  servicesSection: {
+    tagline: string;
+    headline: string;
+    subheadline: string;
+    services: Array<{ icon: string; title: string; description: string }>;
+  };
+  whyChooseUs: {
+    tagline: string;
+    headline: string;
+    benefits: Array<{ icon: string; title: string; description: string }>;
+  };
+  serviceArea: {
+    headline: string;
+    hoursHeadline: string;
+    hoursSubtext: string;
+    phoneHeadline: string;
+  };
+  emergencyCta: {
+    headline: string;
+    subheadline: string;
+    ctaText: string;
+  };
+  contactSection: {
+    tagline: string;
+    trustBadges: string[];
+    servingNote: string;
+  };
+  seo: {
+    title: string;
+    description: string;
+    keywords: string;
+    schemaType: string;
+  };
+  theme: {
+    primary: string;
+    primaryDark: string;
+    accent: string;
+    accentHover: string;
+  };
+}
+
+const SYSTEM_PROMPT = `You are an expert copywriter specializing in local service business marketing. Your task is to generate compelling, SEO-optimized copy for a landing page that converts visitors into customers.
+
+The Goal: Create copy that:
+1. Builds immediate trust and credibility
+2. Clearly communicates the value proposition
+3. Drives phone calls and inquiries
+4. Ranks well for local SEO
+5. Feels professional yet approachable
+
+Output ONLY a valid JSON object with the exact structure specified. No markdown, no explanations, no preamble.`;
+
+function buildUserPrompt(business: Business): string {
+  const zipMatch = business.address?.match(/\b(\d{5}(?:-\d{4})?)\b/);
+  const zip = zipMatch ? zipMatch[1] : '';
+  
+  let reviews: Array<{ text: string; author: string; rating: number }> = [];
+  try {
+    const parsedReviews = JSON.parse((business as Record<string, unknown>).reviews as string || '[]');
+    reviews = parsedReviews.map((r: { text?: string; authorDisplayName?: string; rating?: number }) => ({
+      text: r.text || '',
+      author: r.authorDisplayName || 'Anonymous',
+      rating: r.rating || 5
+    }));
+  } catch {
+    reviews = [];
+  }
+  
+  const businessData = {
+    business_name: business.business_name,
+    business_type: business.business_type,
+    phone: business.phone || '',
+    address: business.address,
+    city: business.city,
+    state: business.state,
+    zip,
+    rating: (business as Record<string, unknown>).rating || null,
+    rating_count: (business as Record<string, unknown>).rating_count || null,
+    hours: (business as Record<string, unknown>).hours || '',
+    reviews,
+    google_maps_uri: (business as Record<string, unknown>).google_maps_uri || '',
+    primary_type: business.business_type
+  };
+
+  return `Using the business data below, generate landing page copy following this exact JSON structure:
+
+{
+  "hero": {
+    "headline": "8-12 words, benefit-focused, include city if possible",
+    "subheadline": "12-20 words, address customer pain point",
+    "primaryCtaText": "4-6 words with phone number, e.g. 'Call Now (555) 123-4567'",
+    "secondaryCtaText": "2-4 words, e.g. 'Get Free Quote'",
+    "trustBadges": ["3 trust signals, 2-4 words each"]
+  },
+  "servicesSection": {
+    "tagline": "2-3 words, e.g. 'WHAT WE OFFER'",
+    "headline": "4-8 words, benefit-oriented",
+    "subheadline": "15-25 words describing service range",
+    "services": [
+      {"icon": "LucideIconName", "title": "2-4 words", "description": "20-30 words"}
+    ]
+  },
+  "whyChooseUs": {
+    "tagline": "2-3 words",
+    "headline": "5-10 words positioning as trusted choice",
+    "benefits": [
+      {"icon": "LucideIconName", "title": "2-5 words", "description": "15-25 words"}
+    ]
+  },
+  "serviceArea": {
+    "headline": "5-10 words emphasizing local area",
+    "hoursHeadline": "2-5 words label for hours",
+    "hoursSubtext": "8-15 words about availability",
+    "phoneHeadline": "2-4 words above phone"
+  },
+  "emergencyCta": {
+    "headline": "3-6 words, urgent",
+    "subheadline": "15-25 words reassuring help is available",
+    "ctaText": "4-8 words with phone number"
+  },
+  "contactSection": {
+    "tagline": "2-3 words",
+    "trustBadges": ["5 trust signals, 3-6 words each"],
+    "servingNote": "15-25 words geographic statement"
+  },
+  "seo": {
+    "title": "50-60 chars for browser/search",
+    "description": "150-160 chars meta description with phone",
+    "keywords": "10-15 comma-separated keywords",
+    "schemaType": "Plumber|Accountant|Chiropractor|HVACBusiness|Electrician|LocalBusiness"
+  },
+  "theme": {
+    "primary": "HSL without hsl(), e.g. '224 64% 33%'",
+    "primaryDark": "darker variant",
+    "accent": "CTA color contrasting with primary",
+    "accentHover": "darker accent for hover"
+  }
+}
+
+Available icons: Wrench, Droplets, Flame, Settings, Shield, Clock, Zap, Award, DollarSign, ThumbsUp, Building, Calculator, FileText, TrendingUp, Briefcase, Users, Lock, Heart, Star, MapPin, Thermometer, Wind, Home, CreditCard, CheckCircle, Leaf, Sparkles, Trash2, Warehouse, Headphones, Server, Cloud, Database, Network, Activity, HeartPulse, Baby, Dumbbell
+
+Color guidelines by business type:
+- Plumbers: Blue primary, Orange accent (trustworthy, urgent)
+- Accountants/Tax: Green primary, Gold accent (professional, prosperous)
+- HVAC: Blue primary, Red accent (reliable, temperature)
+- Chiropractors: Teal primary, Coral accent (wellness, healing)
+- Electricians: Yellow primary, Navy accent (energy, safety)
+- Commercial Cleaning: Cyan primary, Green accent (clean, fresh)
+- IT Support: Purple primary, Cyan accent (tech, modern)
+
+Business Data:
+${JSON.stringify(businessData, null, 2)}
+
+Generate 6 services and 6 benefits relevant to this business type. Return ONLY the JSON object.`;
+}
+
+function flattenCopy(copy: LandingPageCopy): Record<string, string> {
+  return {
+    copy_hero_headline: copy.hero.headline,
+    copy_hero_subheadline: copy.hero.subheadline,
+    copy_hero_primary_cta: copy.hero.primaryCtaText,
+    copy_hero_secondary_cta: copy.hero.secondaryCtaText,
+    copy_hero_trust_badges: copy.hero.trustBadges.join(' | '),
+    copy_services_tagline: copy.servicesSection.tagline,
+    copy_services_headline: copy.servicesSection.headline,
+    copy_services_subheadline: copy.servicesSection.subheadline,
+    copy_services_items: JSON.stringify(copy.servicesSection.services),
+    copy_why_tagline: copy.whyChooseUs.tagline,
+    copy_why_headline: copy.whyChooseUs.headline,
+    copy_why_benefits: JSON.stringify(copy.whyChooseUs.benefits),
+    copy_area_headline: copy.serviceArea.headline,
+    copy_area_hours_headline: copy.serviceArea.hoursHeadline,
+    copy_area_hours_subtext: copy.serviceArea.hoursSubtext,
+    copy_area_phone_headline: copy.serviceArea.phoneHeadline,
+    copy_emergency_headline: copy.emergencyCta.headline,
+    copy_emergency_subheadline: copy.emergencyCta.subheadline,
+    copy_emergency_cta: copy.emergencyCta.ctaText,
+    copy_contact_tagline: copy.contactSection.tagline,
+    copy_contact_trust_badges: copy.contactSection.trustBadges.join(' | '),
+    copy_contact_serving_note: copy.contactSection.servingNote,
+    copy_seo_title: copy.seo.title,
+    copy_seo_description: copy.seo.description,
+    copy_seo_keywords: copy.seo.keywords,
+    copy_seo_schema_type: copy.seo.schemaType,
+    copy_theme_primary: copy.theme.primary,
+    copy_theme_primary_dark: copy.theme.primaryDark,
+    copy_theme_accent: copy.theme.accent,
+    copy_theme_accent_hover: copy.theme.accentHover,
+  };
+}
+
+async function generateCopy(placeId: string): Promise<APIGatewayProxyResultV2> {
+  if (!CLAUDE_API_KEY) {
+    return response(500, { error: 'Claude API key not configured' });
+  }
+
+  // Get the business
+  const getCommand = new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  });
+  
+  const result = await docClient.send(getCommand);
+  
+  if (!result.Item) {
+    return response(404, { error: 'Business not found' });
+  }
+  
+  const business = result.Item as Business;
+  
+  console.log(`Generating copy for: ${business.business_name}`);
+  
+  // Initialize Anthropic client
+  const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY });
+  
+  // Call Claude API
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    messages: [
+      {
+        role: 'user',
+        content: buildUserPrompt(business),
+      },
+    ],
+    system: SYSTEM_PROMPT,
+  });
+  
+  // Extract text content
+  const textContent = message.content.find(block => block.type === 'text');
+  if (!textContent || textContent.type !== 'text') {
+    return response(500, { error: 'No text response from Claude' });
+  }
+  
+  // Parse the JSON response
+  let copy: LandingPageCopy;
+  try {
+    copy = JSON.parse(textContent.text) as LandingPageCopy;
+  } catch (e) {
+    console.error('Failed to parse Claude response:', textContent.text);
+    return response(500, { error: 'Failed to parse LLM response', details: String(e) });
+  }
+  
+  // Flatten the copy and update the business
+  const flatCopy = flattenCopy(copy);
+  
+  // Build update expression
+  const updateParts: string[] = ['#copy_generated = :true', '#updated_at = :now'];
+  const expressionNames: Record<string, string> = {
+    '#copy_generated': 'copy_generated',
+    '#updated_at': 'updated_at',
+  };
+  const expressionValues: Record<string, unknown> = {
+    ':true': true,
+    ':now': new Date().toISOString(),
+  };
+  
+  Object.entries(flatCopy).forEach(([key, value], index) => {
+    updateParts.push(`#attr${index} = :val${index}`);
+    expressionNames[`#attr${index}`] = key;
+    expressionValues[`:val${index}`] = value;
+  });
+  
+  await docClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
+  
+  console.log(`Copy generated successfully for: ${business.business_name}`);
+  
+  // Return the updated business
+  const updatedResult = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+  
+  return response(200, updatedResult.Item);
 }
 

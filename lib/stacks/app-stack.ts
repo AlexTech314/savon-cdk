@@ -280,11 +280,12 @@ export class AppStack extends cdk.Stack {
       entry: path.join(__dirname, '../../src/config-lambda/index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 256,
+      timeout: cdk.Duration.seconds(60), // Increased for LLM calls
+      memorySize: 512,
       logGroup: configLogGroup,
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        CLAUDE_API_KEY: claudeSecret.secretValue.unsafeUnwrap(),
       },
       bundling: {
         minify: true,
@@ -293,6 +294,7 @@ export class AppStack extends cdk.Stack {
     });
 
     businessesTable.grantReadWriteData(configLambda);
+    claudeSecret.grantRead(configLambda);
 
     const jobsLogGroup = new logs.LogGroup(this, 'JobsLambdaLogs', {
       retention: logs.RetentionDays.ONE_WEEK,
@@ -423,6 +425,13 @@ export class AppStack extends cdk.Stack {
     httpApi.addRoutes({
       path: '/businesses/{place_id}',
       methods: [apigwv2.HttpMethod.PUT, apigwv2.HttpMethod.DELETE],
+      integration: configIntegration,
+      authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/businesses/{place_id}/generate-copy',
+      methods: [apigwv2.HttpMethod.POST],
       integration: configIntegration,
       authorizer,
     });
