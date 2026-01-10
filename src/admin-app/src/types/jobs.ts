@@ -45,41 +45,45 @@ export interface CopyConfig {
   rules: RuleGroup;
 }
 
-export interface JobTemplate {
-  id: string;
+// Campaign = saved search configuration for finding leads
+export interface Campaign {
+  campaign_id: string;
   name: string;
   description?: string;
-  jobType: 'places' | 'copy' | 'both';
-  placesConfig?: PlacesConfig;
-  copyConfig?: CopyConfig;
-  createdAt: string;
+  searches: SearchQuery[];
+  max_results_per_search: number;
+  only_without_website: boolean;
+  created_at: string;
+  updated_at: string;
+  last_run_at?: string;
 }
 
-export interface JobConfig {
-  jobType: 'places' | 'copy' | 'both';
-  placesConfig?: PlacesConfig;
-  copyConfig?: CopyConfig;
-  templateId?: string;
-  templateName?: string;
+// Input for creating/updating campaigns
+export interface CampaignInput {
+  name: string;
+  description?: string;
+  searches: SearchQuery[];
+  maxResultsPerSearch?: number;
+  onlyWithoutWebsite?: boolean;
 }
 
 export interface Job {
   job_id: string;
-  job_type: 'places' | 'copy' | 'both';
-  status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+  job_type: 'places'; // All campaign jobs are places (lead finding)
+  status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED';
+  campaign_id: string;
+  campaign_name?: string;
   created_at: string;
   started_at?: string;
   completed_at?: string;
-  config?: JobConfig;
-  input: {
-    business_types?: string[];
-    states?: string[];
-    limit?: number;
+  input?: {
+    campaignId: string;
+    jobType: 'places';
+    searches: SearchQuery[];
+    maxResultsPerSearch: number;
+    onlyWithoutWebsite: boolean;
   };
   error?: string;
-  records_processed?: number;
-  records_total?: number;
-  matched_rules?: number;
 }
 
 // Field definitions for rule builder

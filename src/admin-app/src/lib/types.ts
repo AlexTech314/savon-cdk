@@ -22,18 +22,21 @@ export interface Business {
 
 export interface Job {
   job_id: string;
-  job_type: 'places' | 'copy' | 'both';
-  status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+  job_type: 'places';
+  status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED';
+  campaign_id: string;
+  campaign_name?: string;
   created_at: string;
   started_at?: string;
   completed_at?: string;
-  input: {
-    business_types?: string[];
-    states?: string[];
-    limit?: number;
+  input?: {
+    campaignId: string;
+    jobType: 'places';
+    searches: { textQuery: string; includedType?: string }[];
+    maxResultsPerSearch: number;
+    onlyWithoutWebsite: boolean;
   };
   error?: string;
-  records_processed?: number;
 }
 
 export interface User {
@@ -58,24 +61,6 @@ export interface BusinessFilters {
 
 export interface JobFilters {
   status?: Job['status'];
-  job_type?: Job['job_type'];
-}
-
-export interface SearchQuery {
-  textQuery: string;
-  includedType?: string;
-}
-
-export interface StartJobInput {
-  job_type: Job['job_type'];
-  // New search-based format
-  searches?: SearchQuery[];
-  maxResultsPerSearch?: number;
-  onlyWithoutWebsite?: boolean;
-  // Legacy format (deprecated)
-  business_types?: string[];
-  states?: string[];
-  limit?: number;
 }
 
 export interface ImportResult {

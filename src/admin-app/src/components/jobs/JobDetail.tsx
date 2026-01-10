@@ -18,23 +18,19 @@ interface JobDetailProps {
   onClose: () => void;
 }
 
-const statusConfig: Record<Job['status'], { label: string; className: string; icon: React.ElementType }> = {
+const statusConfig: Record<string, { label: string; className: string; icon: React.ElementType }> = {
   PENDING: { label: 'Pending', className: 'bg-warning/20 text-warning border-warning/30', icon: Clock },
   RUNNING: { label: 'Running', className: 'bg-info/20 text-info border-info/30', icon: Loader2 },
   SUCCEEDED: { label: 'Succeeded', className: 'bg-accent/20 text-accent border-accent/30', icon: CheckCircle },
   FAILED: { label: 'Failed', className: 'bg-destructive/20 text-destructive border-destructive/30', icon: AlertCircle },
-};
-
-const jobTypeLabels: Record<Job['job_type'], string> = {
-  places: 'Google Places Search',
-  copy: 'Generate LLM Copy',
-  both: 'Places + Copy Pipeline',
+  TIMED_OUT: { label: 'Timed Out', className: 'bg-destructive/20 text-destructive border-destructive/30', icon: AlertCircle },
+  ABORTED: { label: 'Aborted', className: 'bg-destructive/20 text-destructive border-destructive/30', icon: AlertCircle },
 };
 
 export const JobDetail: React.FC<JobDetailProps> = ({ job, open, onClose }) => {
   if (!job) return null;
 
-  const config = statusConfig[job.status];
+  const config = statusConfig[job.status] || statusConfig.FAILED;
   const StatusIcon = config.icon;
 
   return (
@@ -64,10 +60,10 @@ export const JobDetail: React.FC<JobDetailProps> = ({ job, open, onClose }) => {
 
           <Separator />
 
-          {/* Type */}
+          {/* Campaign */}
           <div>
-            <p className="text-sm font-medium text-muted-foreground">Type</p>
-            <p className="mt-1">{jobTypeLabels[job.job_type]}</p>
+            <p className="text-sm font-medium text-muted-foreground">Campaign</p>
+            <p className="mt-1 font-medium">{job.campaign_name || 'Unknown Campaign'}</p>
           </div>
 
           {/* Timestamps */}
@@ -91,14 +87,6 @@ export const JobDetail: React.FC<JobDetailProps> = ({ job, open, onClose }) => {
                 <p className="text-sm font-medium text-muted-foreground">Completed</p>
                 <p className="mt-1 text-sm">
                   {format(new Date(job.completed_at), 'MMM d, yyyy h:mm:ss a')}
-                </p>
-              </div>
-            )}
-            {job.records_processed !== undefined && (
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Records Processed</p>
-                <p className="mt-1 text-sm font-semibold text-accent">
-                  {job.records_processed}
                 </p>
               </div>
             )}

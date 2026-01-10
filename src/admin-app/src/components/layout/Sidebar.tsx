@@ -10,6 +10,7 @@ import {
   Upload,
   ChevronLeft,
   ChevronRight,
+  Megaphone,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import savonLogo from '@/assets/savon-logo.png';
@@ -21,6 +22,7 @@ interface SidebarProps {
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+  { path: '/campaigns', label: 'Campaigns', icon: Megaphone, exact: false },
   { path: '/businesses', label: 'Businesses', icon: Building2, exact: true },
   { path: '/businesses/import', label: 'Import/Export', icon: Upload, exact: true },
   { path: '/jobs', label: 'Jobs', icon: Briefcase, exact: false },

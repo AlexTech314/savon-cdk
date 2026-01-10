@@ -5,6 +5,7 @@ import { Construct } from 'constructs';
 export class StatefulStack extends cdk.Stack {
   public readonly businessesTable: dynamodb.Table;
   public readonly jobsTable: dynamodb.Table;
+  public readonly campaignsTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -56,6 +57,24 @@ export class StatefulStack extends cdk.Stack {
       sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
     });
 
+    // GSI for querying jobs by campaign
+    this.jobsTable.addGlobalSecondaryIndex({
+      indexName: 'by-campaign',
+      partitionKey: { name: 'campaign_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
+    });
+
+    // ============================================================
+    // Campaigns Table
+    // ============================================================
+    this.campaignsTable = new dynamodb.Table(this, 'Campaigns', {
+      partitionKey: { name: 'campaign_id', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     // ============================================================
     // Outputs
     // ============================================================
@@ -72,6 +91,11 @@ export class StatefulStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'JobsTableName', {
       value: this.jobsTable.tableName,
       exportName: `${cdk.Aws.STACK_NAME}-JobsTableName`,
+    });
+
+    new cdk.CfnOutput(this, 'CampaignsTableName', {
+      value: this.campaignsTable.tableName,
+      exportName: `${cdk.Aws.STACK_NAME}-CampaignsTableName`,
     });
   }
 }

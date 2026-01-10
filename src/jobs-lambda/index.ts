@@ -21,14 +21,28 @@ const sfnClient = new SFNClient({});
 
 const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME!;
 const STATE_MACHINE_ARN = process.env.STATE_MACHINE_ARN!;
+const CAMPAIGNS_TABLE_NAME = process.env.CAMPAIGNS_TABLE_NAME!;
+
+interface SearchQuery {
+  textQuery: string;
+  includedType?: string;
+}
+
+interface Campaign {
+  campaign_id: string;
+  name: string;
+  searches: SearchQuery[];
+  max_results_per_search: number;
+  only_without_website: boolean;
+}
 
 interface JobInput {
-  jobType: 'places' | 'copy' | 'both';
-  businessTypes?: string[];
-  states?: string[];
-  countPerType?: number;
-  placeIds?: string[];
-  allMissingCopy?: boolean;
+  campaignId: string;
+  // Populated from campaign
+  jobType: 'places';
+  searches: SearchQuery[];
+  maxResultsPerSearch: number;
+  onlyWithoutWebsite: boolean;
 }
 
 interface Job {
@@ -36,6 +50,8 @@ interface Job {
   created_at: string;
   status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED';
   job_type: string;
+  campaign_id: string;
+  campaign_name?: string;
   execution_arn?: string;
   input?: JobInput;
   started_at?: string;
@@ -142,15 +158,36 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
     return response(400, { error: 'Request body required' });
   }
   
-  const input = JSON.parse(body) as JobInput;
+  const requestBody = JSON.parse(body) as { campaignId: string };
   
-  // Validate job type
-  if (!['places', 'copy', 'both'].includes(input.jobType)) {
+  // Validate campaign_id is provided
+  if (!requestBody.campaignId) {
     return response(400, { 
-      error: 'Invalid jobType', 
-      details: 'jobType must be "places", "copy", or "both"' 
+      error: 'campaignId is required', 
+      details: 'Jobs must be started from a campaign' 
     });
   }
+  
+  // Fetch campaign from DynamoDB
+  const campaignResult = await docClient.send(new GetCommand({
+    TableName: CAMPAIGNS_TABLE_NAME,
+    Key: { campaign_id: requestBody.campaignId },
+  }));
+  
+  if (!campaignResult.Item) {
+    return response(404, { error: 'Campaign not found' });
+  }
+  
+  const campaign = campaignResult.Item as Campaign;
+  
+  // Build job input from campaign
+  const jobInput: JobInput = {
+    campaignId: campaign.campaign_id,
+    jobType: 'places', // All campaign jobs are places (lead finding)
+    searches: campaign.searches,
+    maxResultsPerSearch: campaign.max_results_per_search,
+    onlyWithoutWebsite: campaign.only_without_website,
+  };
   
   // Generate job ID
   const jobId = randomUUID();
@@ -162,7 +199,7 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
   const startResult = await sfnClient.send(new StartExecutionCommand({
     stateMachineArn: STATE_MACHINE_ARN,
     name: executionName,
-    input: JSON.stringify(input),
+    input: JSON.stringify(jobInput),
   }));
   
   // Create job record
@@ -170,9 +207,11 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
     job_id: jobId,
     created_at: createdAt,
     status: 'RUNNING',
-    job_type: input.jobType,
+    job_type: 'places',
+    campaign_id: campaign.campaign_id,
+    campaign_name: campaign.name,
     execution_arn: startResult.executionArn,
-    input,
+    input: jobInput,
     started_at: startResult.startDate?.toISOString(),
     expires_at: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days TTL
   };
@@ -180,6 +219,16 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
   await docClient.send(new PutCommand({
     TableName: JOBS_TABLE_NAME,
     Item: job,
+  }));
+  
+  // Update campaign's last_run_at
+  await docClient.send(new PutCommand({
+    TableName: CAMPAIGNS_TABLE_NAME,
+    Item: {
+      ...campaign,
+      last_run_at: createdAt,
+      updated_at: createdAt,
+    },
   }));
   
   return response(201, {

@@ -25,6 +25,7 @@ import * as path from 'path';
 export interface AppStackProps extends cdk.StackProps {
   businessesTable: dynamodb.ITable;
   jobsTable: dynamodb.ITable;
+  campaignsTable: dynamodb.ITable;
   hostedZoneId: string;
   hostedZoneName: string;
   certificateArn: string;
@@ -34,7 +35,7 @@ export class AppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
 
-    const { businessesTable, jobsTable, hostedZoneId, hostedZoneName, certificateArn } = props;
+    const { businessesTable, jobsTable, campaignsTable, hostedZoneId, hostedZoneName, certificateArn } = props;
 
     // Import DNS resources from the separately deployed DnsStack
     const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'ImportedHostedZone', {
@@ -307,6 +308,7 @@ export class AppStack extends cdk.Stack {
       logGroup: jobsLogGroup,
       environment: {
         JOBS_TABLE_NAME: jobsTable.tableName,
+        CAMPAIGNS_TABLE_NAME: campaignsTable.tableName,
         STATE_MACHINE_ARN: stateMachine.stateMachineArn,
       },
       bundling: {
@@ -316,8 +318,33 @@ export class AppStack extends cdk.Stack {
     });
 
     jobsTable.grantReadWriteData(jobsLambda);
+    campaignsTable.grantReadWriteData(jobsLambda);
     stateMachine.grantStartExecution(jobsLambda);
     stateMachine.grantRead(jobsLambda);
+
+    // Campaigns Lambda
+    const campaignsLogGroup = new logs.LogGroup(this, 'CampaignsLambdaLogs', {
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const campaignsLambda = new nodejs.NodejsFunction(this, 'CampaignsLambda', {
+      entry: path.join(__dirname, '../../src/campaigns-lambda/index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      logGroup: campaignsLogGroup,
+      environment: {
+        CAMPAIGNS_TABLE_NAME: campaignsTable.tableName,
+      },
+      bundling: {
+        minify: true,
+        sourceMap: true,
+      },
+    });
+
+    campaignsTable.grantReadWriteData(campaignsLambda);
 
     // ============================================================
     // API Gateway with Custom Domain
@@ -371,6 +398,7 @@ export class AppStack extends cdk.Stack {
 
     const configIntegration = new HttpLambdaIntegration('ConfigIntegration', configLambda);
     const jobsIntegration = new HttpLambdaIntegration('JobsIntegration', jobsLambda);
+    const campaignsIntegration = new HttpLambdaIntegration('CampaignsIntegration', campaignsLambda);
 
     // Public routes (preview app uses these)
     httpApi.addRoutes({
@@ -424,6 +452,28 @@ export class AppStack extends cdk.Stack {
       path: '/jobs/{job_id}',
       methods: [apigwv2.HttpMethod.GET],
       integration: jobsIntegration,
+      authorizer,
+    });
+
+    // Campaigns routes (all protected)
+    httpApi.addRoutes({
+      path: '/campaigns',
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: campaignsIntegration,
+      authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/campaigns/{campaign_id}',
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PUT, apigwv2.HttpMethod.DELETE],
+      integration: campaignsIntegration,
+      authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/campaigns/{campaign_id}/run',
+      methods: [apigwv2.HttpMethod.PATCH],
+      integration: campaignsIntegration,
       authorizer,
     });
 

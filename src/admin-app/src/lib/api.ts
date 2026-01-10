@@ -9,9 +9,9 @@ import {
   Job, 
   PaginatedResponse, 
   BusinessFilters, 
-  StartJobInput,
   ImportResult 
 } from './types';
+import { Campaign, CampaignInput } from '@/types/jobs';
 import { getIdToken } from './auth';
 import { API_BASE_URL } from './amplify-config';
 
@@ -247,17 +247,19 @@ export const exportBusinesses = async (_filters?: BusinessFilters): Promise<stri
 
 interface BackendJob {
   job_id: string;
-  job_type: 'places' | 'copy' | 'both';
+  job_type: 'places';
   status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED';
+  campaign_id: string;
+  campaign_name?: string;
   created_at: string;
   started_at?: string;
   completed_at?: string;
   input?: {
-    businessTypes?: string[];
-    states?: string[];
-    countPerType?: number;
-    placeIds?: string[];
-    allMissingCopy?: boolean;
+    campaignId: string;
+    jobType: 'places';
+    searches: { textQuery: string; includedType?: string }[];
+    maxResultsPerSearch: number;
+    onlyWithoutWebsite: boolean;
   };
   error?: string;
   execution_arn?: string;
@@ -268,14 +270,12 @@ function transformJob(j: BackendJob): Job {
     job_id: j.job_id,
     job_type: j.job_type,
     status: j.status === 'TIMED_OUT' || j.status === 'ABORTED' ? 'FAILED' : j.status,
+    campaign_id: j.campaign_id,
+    campaign_name: j.campaign_name,
     created_at: j.created_at,
     started_at: j.started_at,
     completed_at: j.completed_at,
-    input: {
-      business_types: j.input?.businessTypes,
-      states: j.input?.states,
-      limit: j.input?.countPerType,
-    },
+    input: j.input,
     error: j.error,
   };
 }
@@ -284,7 +284,6 @@ export const getJobs = async (params: {
   page?: number;
   limit?: number;
   status?: Job['status'];
-  job_type?: Job['job_type'];
 }): Promise<PaginatedResponse<Job>> => {
   const { page = 1, limit = 20, status } = params;
   
@@ -299,12 +298,7 @@ export const getJobs = async (params: {
     { requiresAuth: true }
   );
   
-  let jobs = response.jobs.map(transformJob);
-  
-  // Client-side filter by job_type if needed
-  if (params.job_type) {
-    jobs = jobs.filter(j => j.job_type === params.job_type);
-  }
+  const jobs = response.jobs.map(transformJob);
   
   return { 
     data: jobs, 
@@ -327,25 +321,13 @@ export const getJob = async (job_id: string): Promise<Job | null> => {
   }
 };
 
-export const startJob = async (input: StartJobInput): Promise<Job> => {
-  // Transform to backend format
-  const backendInput = {
-    jobType: input.job_type,
-    // New search-based format
-    searches: input.searches,
-    maxResultsPerSearch: input.maxResultsPerSearch,
-    onlyWithoutWebsite: input.onlyWithoutWebsite,
-    // Legacy format (for backwards compatibility)
-    businessTypes: input.business_types,
-    states: input.states,
-    countPerType: input.limit,
-  };
-  
+// Start a job from a campaign
+export const startJob = async (campaignId: string): Promise<Job> => {
   const response = await apiClient<{ job: BackendJob; message: string }>(
     '/jobs',
     {
       method: 'POST',
-      body: JSON.stringify(backendInput),
+      body: JSON.stringify({ campaignId }),
       requiresAuth: true,
     }
   );
@@ -435,27 +417,130 @@ export const getStats = async (): Promise<DashboardStats> => {
 };
 
 // ============================================
-// GENERATE COPY API
+// GENERATE PREVIEW (COPY) API
 // ============================================
 
 export const generateCopy = async (place_id: string): Promise<Business> => {
-  // Start a copy job for a specific business
-  const job = await startJob({
-    job_type: 'copy',
-    // The backend would need to support placeIds filter
-  });
+  // Quick generate preview for a single business
+  const response = await apiClient<BackendBusiness>(
+    `/businesses/${encodeURIComponent(place_id)}/generate-copy`,
+    {
+      method: 'POST',
+      requiresAuth: true,
+    }
+  );
   
-  // Return the business (copy generation happens async)
-  const business = await getBusiness(place_id);
-  if (!business) {
-    throw new Error('Business not found');
-  }
-  
-  return business;
+  return transformBusiness(response);
 };
 
 export const generateCopyBulk = async (place_ids: string[]): Promise<number> => {
-  // Start a copy job
-  await startJob({ job_type: 'copy' });
-  return place_ids.length;
+  // Generate previews for multiple businesses
+  // This would trigger a background job or sequential generation
+  let generated = 0;
+  for (const id of place_ids) {
+    try {
+      await generateCopy(id);
+      generated++;
+    } catch (e) {
+      console.error(`Failed to generate preview for ${id}:`, e);
+    }
+  }
+  return generated;
+};
+
+// ============================================
+// CAMPAIGN API
+// ============================================
+
+interface BackendCampaign {
+  campaign_id: string;
+  name: string;
+  description?: string;
+  searches: { textQuery: string; includedType?: string }[];
+  max_results_per_search: number;
+  only_without_website: boolean;
+  created_at: string;
+  updated_at: string;
+  last_run_at?: string;
+}
+
+function transformCampaign(c: BackendCampaign): Campaign {
+  return {
+    campaign_id: c.campaign_id,
+    name: c.name,
+    description: c.description,
+    searches: c.searches,
+    max_results_per_search: c.max_results_per_search,
+    only_without_website: c.only_without_website,
+    created_at: c.created_at,
+    updated_at: c.updated_at,
+    last_run_at: c.last_run_at,
+  };
+}
+
+export const getCampaigns = async (): Promise<Campaign[]> => {
+  const response = await apiClient<{ campaigns: BackendCampaign[]; count: number }>(
+    '/campaigns',
+    { requiresAuth: true }
+  );
+  
+  return response.campaigns.map(transformCampaign);
+};
+
+export const getCampaign = async (campaignId: string): Promise<Campaign | null> => {
+  try {
+    const response = await apiClient<{ campaign: BackendCampaign }>(
+      `/campaigns/${encodeURIComponent(campaignId)}`,
+      { requiresAuth: true }
+    );
+    return transformCampaign(response.campaign);
+  } catch {
+    return null;
+  }
+};
+
+export const createCampaign = async (input: CampaignInput): Promise<Campaign> => {
+  const response = await apiClient<{ campaign: BackendCampaign }>(
+    '/campaigns',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+      requiresAuth: true,
+    }
+  );
+  
+  return transformCampaign(response.campaign);
+};
+
+export const updateCampaign = async (campaignId: string, input: Partial<CampaignInput>): Promise<Campaign> => {
+  const response = await apiClient<{ campaign: BackendCampaign }>(
+    `/campaigns/${encodeURIComponent(campaignId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(input),
+      requiresAuth: true,
+    }
+  );
+  
+  return transformCampaign(response.campaign);
+};
+
+export const deleteCampaign = async (campaignId: string): Promise<boolean> => {
+  try {
+    await apiClient(
+      `/campaigns/${encodeURIComponent(campaignId)}`,
+      {
+        method: 'DELETE',
+        requiresAuth: true,
+      }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const runCampaign = async (campaignId: string): Promise<Job> => {
+  // Starting a job from a campaign
+  return startJob(campaignId);
 };

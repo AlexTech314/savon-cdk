@@ -24,17 +24,13 @@ interface JobsTableProps {
   onRowClick: (job: Job) => void;
 }
 
-const statusConfig: Record<Job['status'], { label: string; className: string }> = {
+const statusConfig: Record<string, { label: string; className: string }> = {
   PENDING: { label: 'Pending', className: 'bg-warning/20 text-warning border-warning/30' },
   RUNNING: { label: 'Running', className: 'bg-info/20 text-info border-info/30 status-running' },
   SUCCEEDED: { label: 'Succeeded', className: 'bg-accent/20 text-accent border-accent/30' },
   FAILED: { label: 'Failed', className: 'bg-destructive/20 text-destructive border-destructive/30' },
-};
-
-const jobTypeLabels: Record<Job['job_type'], string> = {
-  places: 'Google Places',
-  copy: 'Generate Preview',
-  both: 'Places + Copy',
+  TIMED_OUT: { label: 'Timed Out', className: 'bg-destructive/20 text-destructive border-destructive/30' },
+  ABORTED: { label: 'Aborted', className: 'bg-destructive/20 text-destructive border-destructive/30' },
 };
 
 export const JobsTable: React.FC<JobsTableProps> = ({
@@ -64,7 +60,7 @@ export const JobsTable: React.FC<JobsTableProps> = ({
           <TableHeader>
             <TableRow>
               <TableHead>Job ID</TableHead>
-              <TableHead>Type</TableHead>
+              <TableHead>Campaign</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Started</TableHead>
               <TableHead>Duration</TableHead>
@@ -104,16 +100,15 @@ export const JobsTable: React.FC<JobsTableProps> = ({
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
               <TableHead>Job ID</TableHead>
-              <TableHead>Type</TableHead>
+              <TableHead>Campaign</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Started</TableHead>
               <TableHead>Duration</TableHead>
-              <TableHead>Records</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {jobs.map((job) => {
-              const config = statusConfig[job.status];
+              const config = statusConfig[job.status] || statusConfig.FAILED;
               
               return (
                 <TableRow
@@ -125,7 +120,9 @@ export const JobsTable: React.FC<JobsTableProps> = ({
                     {job.job_id.substring(0, 12)}...
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{jobTypeLabels[job.job_type]}</Badge>
+                    <span className="font-medium">
+                      {job.campaign_name || 'Unknown Campaign'}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <Badge className={cn('border', config.className)}>
@@ -139,9 +136,6 @@ export const JobsTable: React.FC<JobsTableProps> = ({
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {getDuration(job)}
-                  </TableCell>
-                  <TableCell>
-                    {job.records_processed ?? '-'}
                   </TableCell>
                 </TableRow>
               );

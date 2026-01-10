@@ -1,0 +1,284 @@
+import React, { useState, useMemo } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { createCampaign, updateCampaign } from '@/lib/api';
+import { Campaign, CampaignInput, PLACE_TYPES, SearchQuery } from '@/types/jobs';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useToast } from '@/hooks/use-toast';
+import { Plus, Trash2, Loader2 } from 'lucide-react';
+
+interface CampaignFormProps {
+  campaign?: Campaign | null;
+  onSuccess: () => void;
+  onCancel: () => void;
+}
+
+export const CampaignForm: React.FC<CampaignFormProps> = ({
+  campaign,
+  onSuccess,
+  onCancel,
+}) => {
+  const { toast } = useToast();
+  const isEditing = !!campaign;
+
+  // Form state
+  const [name, setName] = useState(campaign?.name || '');
+  const [description, setDescription] = useState(campaign?.description || '');
+  const [searches, setSearches] = useState<SearchQuery[]>(
+    campaign?.searches || [{ textQuery: '', includedType: '' }]
+  );
+  const [maxResultsPerSearch, setMaxResultsPerSearch] = useState(
+    campaign?.max_results_per_search ?? 500
+  );
+  const [onlyWithoutWebsite, setOnlyWithoutWebsite] = useState(
+    campaign?.only_without_website ?? true
+  );
+
+  // Group place types by category
+  const groupedTypes = useMemo(() => {
+    const groups: Record<string, typeof PLACE_TYPES> = {};
+    PLACE_TYPES.forEach(type => {
+      const category = type.category || 'Other';
+      if (!groups[category]) groups[category] = [];
+      groups[category].push(type);
+    });
+    return groups;
+  }, []);
+
+  const createMutation = useMutation({
+    mutationFn: (input: CampaignInput) => createCampaign(input),
+    onSuccess: () => {
+      toast({
+        title: 'Campaign Created',
+        description: 'Your campaign has been created successfully.',
+      });
+      onSuccess();
+    },
+    onError: () => {
+      toast({
+        title: 'Error',
+        description: 'Failed to create campaign.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (input: CampaignInput) => updateCampaign(campaign!.campaign_id, input),
+    onSuccess: () => {
+      toast({
+        title: 'Campaign Updated',
+        description: 'Your campaign has been updated successfully.',
+      });
+      onSuccess();
+    },
+    onError: () => {
+      toast({
+        title: 'Error',
+        description: 'Failed to update campaign.',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const addSearch = () => {
+    setSearches([...searches, { textQuery: '', includedType: '' }]);
+  };
+
+  const removeSearch = (index: number) => {
+    setSearches(searches.filter((_, i) => i !== index));
+  };
+
+  const updateSearch = (index: number, field: keyof SearchQuery, value: string) => {
+    const updated = [...searches];
+    updated[index] = { ...updated[index], [field]: value };
+    setSearches(updated);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Validate
+    if (!name.trim()) {
+      toast({
+        title: 'Validation Error',
+        description: 'Campaign name is required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const validSearches = searches.filter(s => s.textQuery.trim());
+    if (validSearches.length === 0) {
+      toast({
+        title: 'Validation Error',
+        description: 'At least one search query is required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const input: CampaignInput = {
+      name: name.trim(),
+      description: description.trim() || undefined,
+      searches: validSearches.map(s => ({
+        textQuery: s.textQuery.trim(),
+        includedType: s.includedType || undefined,
+      })),
+      maxResultsPerSearch,
+      onlyWithoutWebsite,
+    };
+
+    if (isEditing) {
+      updateMutation.mutate(input);
+    } else {
+      createMutation.mutate(input);
+    }
+  };
+
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Name & Description */}
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="name">Campaign Name *</Label>
+          <Input
+            id="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g., Texas Plumbers Campaign"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="description">Description</Label>
+          <Textarea
+            id="description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Optional description of this campaign..."
+            rows={2}
+          />
+        </div>
+      </div>
+
+      {/* Search Queries */}
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label>Search Queries *</Label>
+          <p className="text-sm text-muted-foreground">
+            Use descriptive queries like "plumbers in Alabama" or "electricians near Austin TX".
+            The type filter narrows results but won't work well with vague queries like just a state name.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          {searches.map((search, index) => (
+            <div key={index} className="flex gap-2 items-center">
+              <Input
+                placeholder="e.g. plumbers in Alabama, electricians near Austin TX..."
+                value={search.textQuery}
+                onChange={(e) => updateSearch(index, 'textQuery', e.target.value)}
+                className="flex-1"
+              />
+              <Select
+                value={search.includedType || '_any'}
+                onValueChange={(value) => updateSearch(index, 'includedType', value === '_any' ? '' : value)}
+              >
+                <SelectTrigger className="w-48">
+                  <SelectValue placeholder="Any type" />
+                </SelectTrigger>
+                <SelectContent className="max-h-80">
+                  <SelectItem value="_any">Any type</SelectItem>
+                  {Object.entries(groupedTypes).map(([category, types]) => (
+                    <SelectGroup key={category}>
+                      <SelectLabel className="text-xs font-semibold text-muted-foreground">
+                        {category}
+                      </SelectLabel>
+                      {types.map(type => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => removeSearch(index)}
+                disabled={searches.length === 1}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        <Button type="button" variant="outline" onClick={addSearch} className="gap-2">
+          <Plus className="h-4 w-4" />
+          Add Search
+        </Button>
+      </div>
+
+      {/* Settings */}
+      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border">
+        <div className="space-y-2">
+          <Label htmlFor="maxResults">Max Results Per Search</Label>
+          <Input
+            id="maxResults"
+            type="number"
+            min={1}
+            max={500}
+            value={maxResultsPerSearch}
+            onChange={(e) => setMaxResultsPerSearch(Math.min(500, Math.max(1, Number(e.target.value))))}
+            className="w-32"
+          />
+          <p className="text-xs text-muted-foreground">
+            1-500 (uses pagination)
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center space-x-2 pt-6">
+            <Checkbox
+              id="onlyWithoutWebsite"
+              checked={onlyWithoutWebsite}
+              onCheckedChange={(checked) => setOnlyWithoutWebsite(!!checked)}
+            />
+            <Label htmlFor="onlyWithoutWebsite" className="cursor-pointer">
+              Only businesses without websites
+            </Label>
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex justify-end gap-3 pt-4 border-t border-border">
+        <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={isPending}>
+          {isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+          {isEditing ? 'Update Campaign' : 'Create Campaign'}
+        </Button>
+      </div>
+    </form>
+  );
+};
