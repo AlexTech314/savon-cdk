@@ -178,11 +178,28 @@ export class AppStack extends cdk.Stack {
       assignPublicIp: true,
     });
 
+    // For "both", we need a separate places task to avoid mutating the original
+    const runPlacesTaskForBoth = new tasks.EcsRunTask(this, 'RunPlacesTaskForBoth', {
+      integrationPattern: sfn.IntegrationPattern.RUN_JOB,
+      cluster,
+      taskDefinition: placesTaskDef,
+      launchTarget: new tasks.EcsFargateLaunchTarget({
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+      }),
+      containerOverrides: [{
+        containerDefinition: placesTaskDef.defaultContainer!,
+        environment: [
+          { name: 'JOB_INPUT', value: sfn.JsonPath.stringAt('States.JsonToString($)') },
+        ],
+      }],
+      assignPublicIp: true,
+    });
+
     const jobType = new sfn.Choice(this, 'CheckJobType')
       .when(sfn.Condition.stringEquals('$.jobType', 'places'), runPlacesTask)
       .when(sfn.Condition.stringEquals('$.jobType', 'copy'), runCopyTask)
       .when(sfn.Condition.stringEquals('$.jobType', 'both'), 
-        runPlacesTask.next(runCopyTask))
+        runPlacesTaskForBoth.next(runCopyTask))
       .otherwise(new sfn.Fail(this, 'InvalidJobType', {
         error: 'InvalidJobType',
         cause: 'jobType must be "places", "copy", or "both"',
