@@ -18,6 +18,11 @@ export class PipelineStack extends cdk.Stack {
     const hostedZoneName = this.node.tryGetContext('hostedZoneName') || 'savondesigns.com';
     const certificateArn = this.node.tryGetContext('certificateArn');
 
+    // Get Alpha stage Cognito config (set after first deployment)
+    const alphaConfig = this.node.tryGetContext('alpha') || {};
+    const alphaCognitoUserPoolId = alphaConfig.cognitoUserPoolId || '';
+    const alphaCognitoClientId = alphaConfig.cognitoClientId || '';
+
     if (!hostedZoneId || !certificateArn) {
       throw new Error(
         'Missing DNS configuration. Deploy SavonDns first, then add to cdk.context.json:\n' +
@@ -41,6 +46,15 @@ export class PipelineStack extends cdk.Stack {
             authentication: cdk.SecretValue.secretsManager(githubTokenSecretName),
           }
         ),
+        env: {
+          // Alpha stage Cognito config (injected at build time)
+          VITE_COGNITO_USER_POOL_ID: alphaCognitoUserPoolId,
+          VITE_COGNITO_CLIENT_ID: alphaCognitoClientId,
+          VITE_COGNITO_DOMAIN: `auth-alpha.${hostedZoneName}`,
+          VITE_API_BASE_URL: `https://api-alpha.${hostedZoneName}`,
+          VITE_REDIRECT_SIGN_IN: `https://admin-alpha.${hostedZoneName}/callback`,
+          VITE_REDIRECT_SIGN_OUT: `https://admin-alpha.${hostedZoneName}/`,
+        },
         commands: [
           // Install and build CDK project
           'npm ci',
