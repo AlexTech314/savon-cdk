@@ -132,11 +132,11 @@ export const PlacesConfigForm: React.FC<PlacesConfigFormProps> = ({
             type="number"
             min={1}
             max={60}
-            value={config.maxResultsPerSearch ?? 60}
+            value={config.maxResultsPerSearch ?? 500}
             onChange={(e) =>
               onChange({
                 ...config,
-                maxResultsPerSearch: Math.min(60, Math.max(1, Number(e.target.value))),
+                maxResultsPerSearch: Math.min(500, Math.max(1, Number(e.target.value))),
               })
             }
             className="w-32"

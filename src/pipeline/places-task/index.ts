@@ -95,7 +95,7 @@ interface SearchResponse {
 async function searchPlaces(query: string, options?: SearchOptions): Promise<PlaceBasic[]> {
   const allPlaces: PlaceBasic[] = [];
   let pageToken: string | undefined;
-  const maxResults = options?.maxResults ?? 60;
+  const maxResults = options?.maxResults ?? 500;
   
   // Minimal fields for cheaper API tier (Essentials vs Pro)
   const fieldMask = 'places.id,places.displayName,places.websiteUri';
@@ -282,7 +282,7 @@ async function main(): Promise<void> {
 
   const { 
     searches = [], 
-    maxResultsPerSearch = 60, 
+    maxResultsPerSearch = 500, 
     onlyWithoutWebsite = true 
   } = jobInput;
 

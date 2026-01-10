@@ -17,7 +17,7 @@ let mockTemplates: JobTemplate[] = [
   {
     id: 'template_2',
     name: 'Generate Missing Copy',
-    description: 'Generate copy for all businesses without existing copy',
+    description: 'Generate preview for all businesses without existing preview',
     jobType: 'copy',
     copyConfig: {
       rules: {

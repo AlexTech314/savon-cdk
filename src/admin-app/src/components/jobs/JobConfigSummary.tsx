@@ -13,7 +13,7 @@ export const JobConfigSummary: React.FC<JobConfigSummaryProps> = ({ config }) =>
     let records = 0;
     if (config.placesConfig) {
       const validSearches = config.placesConfig.searches.filter(s => s.textQuery.trim());
-      const maxResults = config.placesConfig.maxResultsPerSearch ?? 60;
+      const maxResults = config.placesConfig.maxResultsPerSearch ?? 500;
       records += validSearches.length * maxResults;
     }
     if (config.copyConfig) {
@@ -76,7 +76,7 @@ export const JobConfigSummary: React.FC<JobConfigSummaryProps> = ({ config }) =>
               <div className="flex items-center gap-2">
                 <Hash className="h-4 w-4 text-muted-foreground" />
                 <span className="text-muted-foreground">Max results per search: </span>
-                <span className="font-medium">{config.placesConfig.maxResultsPerSearch ?? 60}</span>
+                <span className="font-medium">{config.placesConfig.maxResultsPerSearch ?? 500}</span>
               </div>
 
               <div className="flex items-center gap-2">

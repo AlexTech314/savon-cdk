@@ -4,12 +4,26 @@ import { getStats } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@/components/ui/chart';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from 'recharts';
+import {
   Building2,
   FileText,
   Briefcase,
   Clock,
 } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, format, parseISO } from 'date-fns';
 
 const Dashboard: React.FC = () => {
   const { data: stats, isLoading } = useQuery({
@@ -27,7 +41,7 @@ const Dashboard: React.FC = () => {
       bgColor: 'bg-primary/10',
     },
     {
-      title: 'Missing Copy',
+      title: 'Missing Preview',
       value: stats?.businessesMissingCopy ?? 0,
       icon: FileText,
       color: 'text-warning',
@@ -51,6 +65,29 @@ const Dashboard: React.FC = () => {
       isText: true,
     },
   ];
+
+  const businessChartConfig = {
+    count: {
+      label: 'Businesses',
+      color: 'hsl(var(--primary))',
+    },
+  };
+
+  const jobsChartConfig = {
+    count: {
+      label: 'Jobs',
+      color: 'hsl(var(--accent))',
+    },
+  };
+
+  // Format date for display
+  const formatDate = (dateStr: string) => {
+    try {
+      return format(parseISO(dateStr), 'MMM d');
+    } catch {
+      return dateStr;
+    }
+  };
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -87,35 +124,107 @@ const Dashboard: React.FC = () => {
         ))}
       </div>
 
-      {/* Recent activity */}
+      {/* Charts */}
       <div className="grid gap-4 lg:grid-cols-2">
+        {/* Businesses over time */}
         <Card className="card-gradient border-border">
           <CardHeader>
-            <CardTitle className="text-lg">Recent Businesses</CardTitle>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Businesses Over Time
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              View the most recently added businesses in the{' '}
-              <a href="/businesses" className="text-primary hover:underline">
-                Businesses
-              </a>{' '}
-              section.
-            </p>
+            {isLoading ? (
+              <Skeleton className="h-[200px] w-full" />
+            ) : stats?.businessesOverTime && stats.businessesOverTime.length > 0 ? (
+              <ChartContainer config={businessChartConfig} className="h-[200px] w-full">
+                <AreaChart
+                  data={stats.businessesOverTime}
+                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="businessGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={formatDate}
+                    className="text-xs"
+                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                  />
+                  <YAxis
+                    className="text-xs"
+                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                    allowDecimals={false}
+                  />
+                  <ChartTooltip
+                    content={<ChartTooltipContent labelFormatter={(value) => formatDate(value as string)} />}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="count"
+                    stroke="hsl(var(--primary))"
+                    fill="url(#businessGradient)"
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[200px] flex items-center justify-center text-muted-foreground">
+                No data available
+              </div>
+            )}
           </CardContent>
         </Card>
 
+        {/* Jobs over time */}
         <Card className="card-gradient border-border">
           <CardHeader>
-            <CardTitle className="text-lg">Pipeline Status</CardTitle>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Briefcase className="h-5 w-5 text-accent" />
+              Jobs Over Time
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Monitor active and completed jobs in the{' '}
-              <a href="/jobs" className="text-primary hover:underline">
-                Jobs
-              </a>{' '}
-              section.
-            </p>
+            {isLoading ? (
+              <Skeleton className="h-[200px] w-full" />
+            ) : stats?.jobsOverTime && stats.jobsOverTime.length > 0 ? (
+              <ChartContainer config={jobsChartConfig} className="h-[200px] w-full">
+                <BarChart
+                  data={stats.jobsOverTime}
+                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={formatDate}
+                    className="text-xs"
+                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                  />
+                  <YAxis
+                    className="text-xs"
+                    tick={{ fill: 'hsl(var(--muted-foreground))' }}
+                    allowDecimals={false}
+                  />
+                  <ChartTooltip
+                    content={<ChartTooltipContent labelFormatter={(value) => formatDate(value as string)} />}
+                  />
+                  <Bar
+                    dataKey="count"
+                    fill="hsl(var(--accent))"
+                    radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[200px] flex items-center justify-center text-muted-foreground">
+                No data available
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

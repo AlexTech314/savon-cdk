@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Server, Key, Users, ExternalLink } from 'lucide-react';
+import { Server, Key } from 'lucide-react';
 
 const Settings: React.FC = () => {
   return (
@@ -83,69 +83,6 @@ const Settings: React.FC = () => {
             <div>
               <p className="text-sm font-medium text-muted-foreground">Region</p>
               <p className="mt-1 text-sm">us-east-1 (N. Virginia)</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* User Management */}
-        <Card className="card-gradient border-border lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-primary" />
-              User Management
-            </CardTitle>
-            <CardDescription>
-              Manage team members and permissions
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Users className="h-12 w-12 text-muted-foreground/50 mb-4" />
-              <p className="text-muted-foreground">User management coming soon</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                This feature will allow you to invite team members and manage permissions
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* External Links */}
-        <Card className="card-gradient border-border lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ExternalLink className="h-5 w-5 text-primary" />
-              Quick Links
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <a
-                href="https://alpha.savondesigns.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-lg border border-border p-4 hover:bg-muted/50 transition-colors"
-              >
-                <ExternalLink className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">Main Site</span>
-              </a>
-              <a
-                href="https://console.aws.amazon.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-lg border border-border p-4 hover:bg-muted/50 transition-colors"
-              >
-                <ExternalLink className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">AWS Console</span>
-              </a>
-              <a
-                href="https://github.com/savondesigns"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-lg border border-border p-4 hover:bg-muted/50 transition-colors"
-              >
-                <ExternalLink className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">GitHub</span>
-              </a>
             </div>
           </CardContent>
         </Card>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchPreviewData, type PreviewData } from "./lib/api";
+import { fetchPreviewData, PreviewNotGeneratedError, type PreviewData } from "./lib/api";
 import {
   Header,
   Hero,
@@ -145,18 +145,22 @@ export default function App() {
     );
   }
 
-  // Error state
+  // Error state - check for preview not generated
   if (error || !data) {
+    const isPreviewNotGenerated = error instanceof PreviewNotGeneratedError;
+    
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center max-w-md px-4">
           <h1 className="text-4xl font-bold text-foreground mb-4">
-            Site Not Found
+            {isPreviewNotGenerated ? "Preview Does Not Exist" : "Site Not Found"}
           </h1>
           <p className="text-muted-foreground mb-6">
-            {previewId 
-              ? `Could not load preview for "${previewId}".`
-              : "No preview ID was provided. Add ?id=your-id to the URL."}
+            {isPreviewNotGenerated
+              ? "This business hasn't had a preview generated yet. Generate a preview from the admin dashboard."
+              : previewId 
+                ? `Could not load preview for "${previewId}".`
+                : "No preview ID was provided. Add ?id=your-id to the URL."}
           </p>
         </div>
       </div>

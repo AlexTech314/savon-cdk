@@ -69,8 +69,8 @@ const Businesses: React.FC = () => {
     mutationFn: generateCopyBulk,
     onSuccess: (count) => {
       toast({
-        title: 'Copy Generated',
-        description: `Generated copy for ${count} business(es).`,
+        title: 'Preview Generated',
+        description: `Generated preview for ${count} business(es).`,
       });
       setSelectedIds([]);
       queryClient.invalidateQueries({ queryKey: ['businesses'] });
@@ -79,7 +79,7 @@ const Businesses: React.FC = () => {
     onError: () => {
       toast({
         title: 'Error',
-        description: 'Failed to generate copy.',
+        description: 'Failed to generate preview.',
         variant: 'destructive',
       });
     },
@@ -194,7 +194,7 @@ const Businesses: React.FC = () => {
             <DropdownMenuContent>
               <DropdownMenuItem onClick={handleBulkGenerateCopy}>
                 <FileText className="mr-2 h-4 w-4" />
-                Generate Copy for Selected
+                Generate Preview for Selected
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => handleExport(false)}>
                 <Download className="mr-2 h-4 w-4" />

@@ -33,7 +33,7 @@ const statusConfig: Record<Job['status'], { label: string; className: string }> 
 
 const jobTypeLabels: Record<Job['job_type'], string> = {
   places: 'Google Places',
-  copy: 'Generate Copy',
+  copy: 'Generate Preview',
   both: 'Places + Copy',
 };
 

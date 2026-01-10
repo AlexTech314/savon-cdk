@@ -69,8 +69,8 @@ const BusinessDetailPage: React.FC = () => {
     mutationFn: () => generateCopy(place_id!),
     onSuccess: () => {
       toast({
-        title: 'Copy Generated',
-        description: 'Business copy has been generated.',
+        title: 'Preview Generated',
+        description: 'Business preview has been generated.',
       });
       queryClient.invalidateQueries({ queryKey: ['business', place_id] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
@@ -78,7 +78,7 @@ const BusinessDetailPage: React.FC = () => {
     onError: () => {
       toast({
         title: 'Error',
-        description: 'Failed to generate copy.',
+        description: 'Failed to generate preview.',
         variant: 'destructive',
       });
     },
@@ -236,12 +236,12 @@ const BusinessDetailPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Generated Copy */}
+        {/* Generated Preview */}
         <Card className="card-gradient border-border">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
-              Generated Copy
+              Generated Preview
             </CardTitle>
             <Button
               size="sm"
@@ -254,7 +254,7 @@ const BusinessDetailPage: React.FC = () => {
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {business.generated_copy ? 'Regenerate' : 'Generate'}
+              {business.generated_copy ? 'Regenerate Preview' : 'Generate Preview'}
             </Button>
           </CardHeader>
           <CardContent>
@@ -284,7 +284,7 @@ const BusinessDetailPage: React.FC = () => {
             ) : (
               <div className="flex flex-col items-center justify-center py-8 text-center">
                 <FileText className="h-12 w-12 text-muted-foreground/50 mb-4" />
-                <p className="text-muted-foreground">No copy generated yet</p>
+                <p className="text-muted-foreground">No preview generated yet</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   Click "Generate" to create marketing copy for this business
                 </p>

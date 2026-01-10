@@ -92,7 +92,7 @@ export const RULE_FIELDS = [
   { key: 'website', label: 'Website', type: 'text' },
   { key: 'rating', label: 'Rating', type: 'number' },
   { key: 'review_count', label: 'Review Count', type: 'number' },
-  { key: 'has_generated_copy', label: 'Has Generated Copy', type: 'boolean' },
+  { key: 'has_generated_copy', label: 'Has Generated Preview', type: 'boolean' },
   { key: 'created_at', label: 'Created Date', type: 'date' },
   { key: 'updated_at', label: 'Updated Date', type: 'date' },
 ] as const;

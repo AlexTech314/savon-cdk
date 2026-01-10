@@ -57,7 +57,7 @@ export const StartJobWizard: React.FC<StartJobWizardProps> = ({
   // Config state
   const [placesConfig, setPlacesConfig] = useState<PlacesConfig>({
     searches: [{ textQuery: '', includedType: '' }],
-    maxResultsPerSearch: 60,
+    maxResultsPerSearch: 500,
     onlyWithoutWebsite: true,
   });
   const [copyRules, setCopyRules] = useState<RuleGroup>(createEmptyRuleGroup());
@@ -90,7 +90,7 @@ export const StartJobWizard: React.FC<StartJobWizardProps> = ({
         setJobType('places');
         setPlacesConfig({
           searches: [{ textQuery: '', includedType: '' }],
-          maxResultsPerSearch: 60,
+          maxResultsPerSearch: 500,
           onlyWithoutWebsite: true,
         });
         setCopyRules(createEmptyRuleGroup());
@@ -308,7 +308,7 @@ export const StartJobWizard: React.FC<StartJobWizardProps> = ({
                   onClick={() => setJobType('both')}
                   icon={<Layers className="h-5 w-5" />}
                   title="Run Both"
-                  description="Search for places, then generate copy"
+                  description="Search for places, then generate previews"
                   extra={
                     <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
                       <Badge variant="outline" className="text-xs">Places</Badge>

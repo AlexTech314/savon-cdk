@@ -357,12 +357,21 @@ export const startJob = async (input: StartJobInput): Promise<Job> => {
 // STATS API
 // ============================================
 
-export const getStats = async (): Promise<{
+export interface TimeSeriesPoint {
+  date: string;
+  count: number;
+}
+
+export interface DashboardStats {
   totalBusinesses: number;
   businessesMissingCopy: number;
   activeJobs: number;
   lastJobRun: string | null;
-}> => {
+  businessesOverTime: TimeSeriesPoint[];
+  jobsOverTime: TimeSeriesPoint[];
+}
+
+export const getStats = async (): Promise<DashboardStats> => {
   // Fetch businesses count
   const businessesResponse = await apiClient<{ items: BackendBusiness[]; count: number }>(
     '/businesses?limit=1'
@@ -381,11 +390,47 @@ export const getStats = async (): Promise<{
   // In production, add a dedicated stats endpoint
   const missingCopyCount = Math.floor(businessesResponse.count * 0.3); // Estimate
   
+  // Generate time-series data from jobs (last 7 days)
+  const last7Days = Array.from({ length: 7 }, (_, i) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (6 - i));
+    return date.toISOString().split('T')[0];
+  });
+  
+  // Count jobs per day
+  const jobsByDay = new Map<string, number>();
+  last7Days.forEach(d => jobsByDay.set(d, 0));
+  jobsResponse.jobs.forEach(job => {
+    const jobDate = job.created_at.split('T')[0];
+    if (jobsByDay.has(jobDate)) {
+      jobsByDay.set(jobDate, (jobsByDay.get(jobDate) || 0) + 1);
+    }
+  });
+  
+  const jobsOverTime: TimeSeriesPoint[] = last7Days.map(date => ({
+    date,
+    count: jobsByDay.get(date) || 0,
+  }));
+  
+  // For businesses, we don't have created_at in the API, so use cumulative mock for now
+  // TODO: Add created_at to businesses table and track actual creation dates
+  const totalBiz = businessesResponse.count;
+  const businessesOverTime: TimeSeriesPoint[] = last7Days.map((date, i) => ({
+    date,
+    count: Math.max(0, Math.floor(totalBiz * ((i + 1) / 7) + (Math.random() - 0.5) * 2)),
+  }));
+  // Ensure last day matches actual total
+  if (businessesOverTime.length > 0) {
+    businessesOverTime[businessesOverTime.length - 1].count = totalBiz;
+  }
+  
   return {
     totalBusinesses: businessesResponse.count,
     businessesMissingCopy: missingCopyCount,
     activeJobs: runningJobs.length,
     lastJobRun: lastCompletedJob?.completed_at || null,
+    businessesOverTime,
+    jobsOverTime,
   };
 };
 
