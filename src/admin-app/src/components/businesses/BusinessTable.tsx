@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Business } from '@/lib/types';
+import { generateCopy } from '@/lib/api';
 import {
   Table,
   TableBody,
@@ -12,6 +13,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/hooks/use-toast';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft,
   ChevronRight,
@@ -20,6 +23,8 @@ import {
   ArrowUpDown,
   Check,
   X,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -50,8 +55,52 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
   onSelectionChange,
   onRowClick,
 }) => {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [generatingStatus, setGeneratingStatus] = useState<string>('');
+
   const allSelected = businesses.length > 0 && businesses.every(b => selectedIds.includes(b.place_id));
   const someSelected = businesses.some(b => selectedIds.includes(b.place_id));
+
+  const handleGeneratePreview = async (business: Business) => {
+    setGeneratingId(business.place_id);
+    setGeneratingStatus('Generating preview with AI...');
+    
+    try {
+      await generateCopy(business.place_id);
+      setGeneratingStatus('Preview generated!');
+      
+      toast({
+        title: 'Preview Generated',
+        description: `Preview created for "${business.name}"`,
+      });
+      
+      // Refresh the businesses list
+      queryClient.invalidateQueries({ queryKey: ['businesses'] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+      
+      // Keep success message briefly visible
+      setTimeout(() => {
+        setGeneratingId(null);
+        setGeneratingStatus('');
+      }, 1500);
+    } catch (error) {
+      console.error('Failed to generate preview:', error);
+      setGeneratingStatus('Failed to generate');
+      
+      toast({
+        title: 'Error',
+        description: 'Failed to generate preview. Please try again.',
+        variant: 'destructive',
+      });
+      
+      setTimeout(() => {
+        setGeneratingId(null);
+        setGeneratingStatus('');
+      }, 2000);
+    }
+  };
 
   const handleSelectAll = () => {
     if (allSelected) {
@@ -76,7 +125,7 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
     { key: 'city', label: 'City', sortable: true },
     { key: 'state', label: 'State', sortable: true },
     { key: 'phone', label: 'Phone', sortable: false },
-    { key: 'has_copy', label: 'Has Copy', sortable: false },
+    { key: 'preview', label: 'Preview', sortable: false },
   ];
 
   if (isLoading && businesses.length === 0) {
@@ -179,15 +228,41 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                 <TableCell>{business.city}</TableCell>
                 <TableCell>{business.state}</TableCell>
                 <TableCell className="text-muted-foreground">{business.phone}</TableCell>
-                <TableCell>
-                  {business.generated_copy ? (
-                    <span className="flex items-center gap-1 text-accent">
-                      <Check className="h-4 w-4" />
-                    </span>
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  {generatingId === business.place_id ? (
+                    <div className="flex items-center gap-2 text-sm">
+                      {generatingStatus.includes('Generated') || generatingStatus.includes('created') ? (
+                        <Check className="h-4 w-4 text-accent" />
+                      ) : generatingStatus.includes('Failed') ? (
+                        <X className="h-4 w-4 text-destructive" />
+                      ) : (
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      )}
+                      <span className={cn(
+                        'text-xs',
+                        generatingStatus.includes('Generated') && 'text-accent',
+                        generatingStatus.includes('Failed') && 'text-destructive',
+                        !generatingStatus.includes('Generated') && !generatingStatus.includes('Failed') && 'text-muted-foreground'
+                      )}>
+                        {generatingStatus}
+                      </span>
+                    </div>
+                  ) : business.generated_copy ? (
+                    <Badge variant="secondary" className="gap-1">
+                      <Check className="h-3 w-3" />
+                      Generated
+                    </Badge>
                   ) : (
-                    <span className="flex items-center gap-1 text-muted-foreground">
-                      <X className="h-4 w-4" />
-                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1 h-7 text-xs"
+                      onClick={() => handleGeneratePreview(business)}
+                      disabled={generatingId !== null}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      Generate
+                    </Button>
                   )}
                 </TableCell>
               </TableRow>
