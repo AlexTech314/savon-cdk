@@ -70,8 +70,8 @@ export const PlacesConfigForm: React.FC<PlacesConfigFormProps> = ({
       <div className="space-y-2">
         <Label>Search Queries</Label>
         <p className="text-sm text-muted-foreground">
-          Search for businesses using any text query - locations, business names, 
-          descriptions, or combinations. Optionally filter by business type.
+          Use descriptive queries like "plumbers in Alabama" or "electricians near Austin TX". 
+          The type filter narrows results but won't work well with vague queries like just a state name.
         </p>
       </div>
 
@@ -79,7 +79,7 @@ export const PlacesConfigForm: React.FC<PlacesConfigFormProps> = ({
         {searches.map((search, index) => (
           <div key={index} className="flex gap-2 items-center">
             <Input
-              placeholder="Search anything: Austin TX, 90210, pet groomers near me..."
+              placeholder="e.g. plumbers in Alabama, electricians near Austin TX..."
               value={search.textQuery}
               onChange={(e) => updateSearch(index, 'textQuery', e.target.value)}
               className="flex-1"

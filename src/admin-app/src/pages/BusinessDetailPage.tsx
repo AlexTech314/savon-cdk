@@ -85,7 +85,8 @@ const BusinessDetailPage: React.FC = () => {
   });
 
   const handlePreview = () => {
-    window.open(`https://preview-alpha.savondesigns.com?place_id=${place_id}`, '_blank');
+    // Open preview in main UI's iframe wrapper at /preview/:id
+    window.open(`https://alpha.savondesigns.com/preview/${place_id}`, '_blank');
   };
 
   if (isLoading) {

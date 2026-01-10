@@ -120,13 +120,13 @@ const Settings: React.FC = () => {
           <CardContent>
             <div className="grid gap-4 sm:grid-cols-3">
               <a
-                href="https://preview-alpha.savondesigns.com"
+                href="https://alpha.savondesigns.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 rounded-lg border border-border p-4 hover:bg-muted/50 transition-colors"
               >
                 <ExternalLink className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">Preview Site</span>
+                <span className="text-sm font-medium">Main Site</span>
               </a>
               <a
                 href="https://console.aws.amazon.com"

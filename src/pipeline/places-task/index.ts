@@ -111,6 +111,8 @@ async function searchPlaces(query: string, options?: SearchOptions): Promise<Pla
     if (options?.includedType) body.includedType = options.includedType;
     if (pageToken) body.pageToken = pageToken;
     
+    console.log(`    API Request: ${JSON.stringify(body)}`);
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -128,6 +130,11 @@ async function searchPlaces(query: string, options?: SearchOptions): Promise<Pla
     }
 
     const data = await response.json() as SearchResponse;
+    
+    if (!data.places || data.places.length === 0) {
+      console.log(`    API Response: No places returned. Raw response keys: ${Object.keys(data).join(', ') || 'empty'}`);
+    }
+    
     allPlaces.push(...(data.places || []));
     pageToken = data.nextPageToken;
     

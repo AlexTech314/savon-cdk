@@ -54,6 +54,8 @@ export class PipelineStack extends cdk.Stack {
           VITE_API_BASE_URL: `https://api-alpha.${hostedZoneName}`,
           VITE_REDIRECT_SIGN_IN: `https://admin-alpha.${hostedZoneName}/callback`,
           VITE_REDIRECT_SIGN_OUT: `https://admin-alpha.${hostedZoneName}/`,
+          // Preview app URL for main UI's iframe embedding
+          VITE_PREVIEW_APP_URL: `https://preview-alpha.${hostedZoneName}`,
         },
         commands: [
           // Install and build CDK project
