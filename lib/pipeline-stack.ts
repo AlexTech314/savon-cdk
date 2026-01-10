@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as pipelines from 'aws-cdk-lib/pipelines';
+import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import { AlphaStage } from './stages/alpha-stage';
 
 export class PipelineStack extends cdk.Stack {
@@ -58,6 +59,19 @@ export class PipelineStack extends cdk.Stack {
       // Docker builds needed for ECS Fargate tasks
       dockerEnabledForSynth: true,
       dockerEnabledForSelfMutation: true,
+
+      // Set Node.js 22 runtime for all CodeBuild projects (required by Vite 7+)
+      codeBuildDefaults: {
+        partialBuildSpec: codebuild.BuildSpec.fromObject({
+          phases: {
+            install: {
+              'runtime-versions': {
+                nodejs: 22,
+              },
+            },
+          },
+        }),
+      },
     });
 
     // Add Alpha stage - single stage for early development
