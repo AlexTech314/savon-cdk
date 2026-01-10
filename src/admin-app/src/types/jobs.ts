@@ -23,7 +23,19 @@ export interface RuleGroup {
   rules: (Rule | RuleGroup)[];
 }
 
+export interface SearchQuery {
+  textQuery: string;
+  includedType?: string;
+}
+
 export interface PlacesConfig {
+  searches: SearchQuery[];
+  maxResultsPerSearch?: number;
+  onlyWithoutWebsite?: boolean;
+}
+
+// Legacy config for backwards compatibility
+export interface LegacyPlacesConfig {
   businessTypes: string[];
   states: string[];
   countPerType: number;
@@ -96,7 +108,31 @@ export const RULE_OPERATORS: Record<string, { label: string; needsValue: boolean
   less_than: { label: 'is less than', needsValue: true },
 };
 
-// Business types for places config
+// Google Places API place types (for includedType parameter)
+export const PLACE_TYPES = [
+  { value: 'plumber', label: 'Plumber' },
+  { value: 'electrician', label: 'Electrician' },
+  { value: 'locksmith', label: 'Locksmith' },
+  { value: 'pet_grooming', label: 'Pet Grooming' },
+  { value: 'laundry', label: 'Laundry' },
+  { value: 'car_repair', label: 'Car Repair' },
+  { value: 'florist', label: 'Florist' },
+  { value: 'bakery', label: 'Bakery' },
+  { value: 'hair_salon', label: 'Hair Salon' },
+  { value: 'dentist', label: 'Dentist' },
+  { value: 'veterinary_care', label: 'Veterinary Care' },
+  { value: 'moving_company', label: 'Moving Company' },
+  { value: 'roofing_contractor', label: 'Roofing Contractor' },
+  { value: 'painter', label: 'Painter' },
+  { value: 'landscaper', label: 'Landscaper' },
+  { value: 'hvac_contractor', label: 'HVAC Contractor' },
+  { value: 'pest_control', label: 'Pest Control' },
+  { value: 'cleaning_service', label: 'Cleaning Service' },
+  { value: 'accounting', label: 'Accounting' },
+  { value: 'lawyer', label: 'Lawyer' },
+];
+
+// Legacy business types for backwards compatibility
 export const BUSINESS_TYPES = [
   'Accountants',
   'Bookkeepers',

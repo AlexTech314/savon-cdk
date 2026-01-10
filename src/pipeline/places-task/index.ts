@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, BatchWriteCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 const docClient = DynamoDBDocumentClient.from(dynamoClient);
@@ -39,18 +39,34 @@ const rateLimiter = {
   }
 };
 
+// ============ Types ============
+
+interface SearchQuery {
+  textQuery: string;
+  includedType?: string;
+}
+
+interface JobInput {
+  searches: SearchQuery[];
+  maxResultsPerSearch?: number;
+  onlyWithoutWebsite?: boolean;
+}
+
 interface PlaceBasic {
   id: string;
-  displayName: { text: string };
+  displayName?: { text: string };
+  websiteUri?: string;
+}
+
+interface PlaceDetails {
+  id: string;
+  displayName?: { text: string };
   formattedAddress?: string;
   nationalPhoneNumber?: string;
   websiteUri?: string;
   rating?: number;
   userRatingCount?: number;
   regularOpeningHours?: { weekdayDescriptions?: string[] };
-}
-
-interface PlaceDetails extends PlaceBasic {
   reviews?: Array<{
     text?: { text: string };
     rating?: number;
@@ -64,41 +80,73 @@ interface PlaceDetails extends PlaceBasic {
   addressComponents?: Array<{ longText: string; shortText: string; types: string[] }>;
 }
 
-interface JobInput {
-  businessTypes?: string[];
-  states?: string[];
-  countPerType?: number;
+interface SearchOptions {
+  includedType?: string;
+  maxResults?: number;
 }
 
-async function searchPlaces(query: string, maxResults = 20): Promise<PlaceBasic[]> {
-  await rateLimiter.acquire();
+interface SearchResponse {
+  places?: PlaceBasic[];
+  nextPageToken?: string;
+}
+
+// ============ API Functions ============
+
+async function searchPlaces(query: string, options?: SearchOptions): Promise<PlaceBasic[]> {
+  const allPlaces: PlaceBasic[] = [];
+  let pageToken: string | undefined;
+  const maxResults = options?.maxResults ?? 60;
   
+  // Minimal fields for cheaper API tier (Essentials vs Pro)
+  const fieldMask = 'places.id,places.displayName,places.websiteUri';
   const url = 'https://places.googleapis.com/v1/places:searchText';
-  const fieldMask = 'places.id,places.displayName,places.formattedAddress,places.websiteUri,places.nationalPhoneNumber,places.rating,places.userRatingCount,places.regularOpeningHours';
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_API_KEY,
-      'X-Goog-FieldMask': fieldMask,
-    },
-    body: JSON.stringify({ textQuery: query, maxResultCount: maxResults }),
-  });
+  do {
+    await rateLimiter.acquire();
+    
+    const body: Record<string, unknown> = { 
+      textQuery: query, 
+      pageSize: 20,
+    };
+    if (options?.includedType) body.includedType = options.includedType;
+    if (pageToken) body.pageToken = pageToken;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GOOGLE_API_KEY,
+        'X-Goog-FieldMask': fieldMask,
+      },
+      body: JSON.stringify(body),
+    });
 
-  if (!response.ok) {
-    throw new Error(`Places API search failed: ${response.status} - ${await response.text()}`);
-  }
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Places API search failed: ${response.status} - ${errorText}`);
+      break;
+    }
 
-  const data = await response.json() as { places?: PlaceBasic[] };
-  return data.places || [];
+    const data = await response.json() as SearchResponse;
+    allPlaces.push(...(data.places || []));
+    pageToken = data.nextPageToken;
+    
+    console.log(`    Page fetched: ${data.places?.length || 0} results (total: ${allPlaces.length})`);
+    
+    // Wait for token validity before next page
+    if (pageToken && allPlaces.length < maxResults) {
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  } while (pageToken && allPlaces.length < maxResults);
+  
+  return allPlaces.slice(0, maxResults);
 }
 
 async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
   await rateLimiter.acquire();
   
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
-  const fieldMask = 'id,displayName,formattedAddress,nationalPhoneNumber,rating,userRatingCount,regularOpeningHours,reviews,editorialSummary,photos,googleMapsUri,location,addressComponents';
+  const fieldMask = 'id,displayName,formattedAddress,nationalPhoneNumber,rating,userRatingCount,regularOpeningHours,reviews,editorialSummary,photos,googleMapsUri,location,addressComponents,websiteUri';
 
   const response = await fetch(url, {
     method: 'GET',
@@ -115,6 +163,8 @@ async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
 
   return await response.json() as PlaceDetails;
 }
+
+// ============ Helper Functions ============
 
 function extractCity(formattedAddress: string): string {
   const parts = formattedAddress.split(',').map(p => p.trim());
@@ -138,106 +188,51 @@ function formatAuthorDisplayName(fullName: string): string {
   return `${parts[0]} ${parts[parts.length - 1].charAt(0).toUpperCase()}.`;
 }
 
-async function findBusinessesWithoutWebsites(
-  businessType: string,
-  state: string,
-  count: number
-): Promise<Record<string, unknown>[]> {
-  const seenPlaceIds = new Set<string>();
-  const noWebsitePlaces: PlaceBasic[] = [];
-  
-  const searchVariations = [
-    `${businessType} in ${state}`,
-    `${businessType} near ${state}`,
-    `${businessType} ${state}`,
-  ];
-  
-  console.log(`Searching for ${count} ${businessType} without websites in ${state}...`);
+function transformToBusinessRecord(details: PlaceDetails, search: SearchQuery): Record<string, unknown> {
+  const photoUrls = (details.photos || [])
+    .slice(0, 5)
+    .map(photo => buildPhotoUrl(photo.name));
 
-  for (const query of searchVariations) {
-    if (noWebsitePlaces.length >= count) break;
+  const reviews = (details.reviews || [])
+    .slice(0, 3)
+    .filter(r => r.text?.text)
+    .map(r => ({
+      text: r.text?.text || '',
+      authorName: r.authorAttribution?.displayName || 'Anonymous',
+      authorDisplayName: formatAuthorDisplayName(r.authorAttribution?.displayName || ''),
+      authorUri: r.authorAttribution?.uri || '',
+      rating: r.rating,
+      relativeTime: r.relativePublishTimeDescription,
+    }));
 
-    console.log(`  Trying: "${query}"...`);
-    
-    try {
-      const places = await searchPlaces(query, 20);
-      console.log(`    Found ${places.length} results`);
+  const streetNumber = extractAddressComponent(details.addressComponents, 'street_number');
+  const route = extractAddressComponent(details.addressComponents, 'route');
+  const state = extractAddressComponent(details.addressComponents, 'administrative_area_level_1');
 
-      for (const place of places) {
-        if (seenPlaceIds.has(place.id)) continue;
-        seenPlaceIds.add(place.id);
-
-        if (!place.websiteUri) {
-          noWebsitePlaces.push(place);
-          console.log(`    ✓ Found without website: ${place.displayName?.text}`);
-          
-          if (noWebsitePlaces.length >= count) break;
-        }
-      }
-    } catch (error) {
-      console.error(`    Error searching: ${error}`);
-    }
-  }
-
-  console.log(`Found ${noWebsitePlaces.length} businesses without websites`);
-
-  const businesses: Record<string, unknown>[] = [];
-
-  for (const place of noWebsitePlaces.slice(0, count)) {
-    try {
-      console.log(`  Getting details for: ${place.displayName?.text}...`);
-      const details = await getPlaceDetails(place.id);
-
-      const photoUrls = (details.photos || [])
-        .slice(0, 5)
-        .map(photo => buildPhotoUrl(photo.name));
-
-      const reviews = (details.reviews || [])
-        .slice(0, 3)
-        .filter(r => r.text?.text)
-        .map(r => ({
-          text: r.text?.text || '',
-          authorName: r.authorAttribution?.displayName || 'Anonymous',
-          authorDisplayName: formatAuthorDisplayName(r.authorAttribution?.displayName || ''),
-          authorUri: r.authorAttribution?.uri || '',
-          rating: r.rating,
-          relativeTime: r.relativePublishTimeDescription,
-        }));
-
-      const streetNumber = extractAddressComponent(details.addressComponents, 'street_number');
-      const route = extractAddressComponent(details.addressComponents, 'route');
-
-      const business = {
-        place_id: place.id,
-        business_name: details.displayName?.text || 'Unknown',
-        business_type: businessType,
-        state: state,
-        city: extractCity(details.formattedAddress || ''),
-        address: details.formattedAddress || '',
-        street: [streetNumber, route].filter(Boolean).join(' '),
-        zip_code: extractAddressComponent(details.addressComponents, 'postal_code'),
-        phone: details.nationalPhoneNumber || '',
-        rating: details.rating || null,
-        rating_count: details.userRatingCount || null,
-        hours: details.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
-        reviews: JSON.stringify(reviews),
-        editorial_summary: details.editorialSummary?.text || '',
-        photo_urls: JSON.stringify(photoUrls),
-        google_maps_uri: details.googleMapsUri || '',
-        latitude: details.location?.latitude || null,
-        longitude: details.location?.longitude || null,
-        friendly_slug: `${(details.displayName?.text || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${place.id.slice(-8)}`,
-        created_at: new Date().toISOString(),
-        copy_generated: false,
-      };
-
-      businesses.push(business);
-    } catch (error) {
-      console.error(`  Error processing ${place.id}:`, error);
-    }
-  }
-
-  return businesses;
+  return {
+    place_id: details.id,
+    business_name: details.displayName?.text || 'Unknown',
+    business_type: search.includedType || 'unknown',
+    search_query: search.textQuery,
+    state: state,
+    city: extractCity(details.formattedAddress || ''),
+    address: details.formattedAddress || '',
+    street: [streetNumber, route].filter(Boolean).join(' '),
+    zip_code: extractAddressComponent(details.addressComponents, 'postal_code'),
+    phone: details.nationalPhoneNumber || '',
+    rating: details.rating || null,
+    rating_count: details.userRatingCount || null,
+    hours: details.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
+    reviews: JSON.stringify(reviews),
+    editorial_summary: details.editorialSummary?.text || '',
+    photo_urls: JSON.stringify(photoUrls),
+    google_maps_uri: details.googleMapsUri || '',
+    latitude: details.location?.latitude || null,
+    longitude: details.location?.longitude || null,
+    friendly_slug: `${(details.displayName?.text || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${details.id.slice(-8)}`,
+    created_at: new Date().toISOString(),
+    copy_generated: false,
+  };
 }
 
 async function writeToDynamoDB(businesses: Record<string, unknown>[]): Promise<void> {
@@ -259,40 +254,78 @@ async function writeToDynamoDB(businesses: Record<string, unknown>[]): Promise<v
   }
 }
 
+// ============ Main ============
+
 async function main(): Promise<void> {
-  console.log('=== Google Places Polling Task ===');
+  console.log('=== Google Places Search Task ===');
   console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
   
   // Parse job input from environment
   const jobInputStr = process.env.JOB_INPUT;
-  let jobInput: JobInput = {};
+  let jobInput: JobInput = { searches: [] };
   
   if (jobInputStr) {
     try {
       jobInput = JSON.parse(jobInputStr);
     } catch (e) {
-      console.warn('Could not parse JOB_INPUT, using defaults');
+      console.error('Could not parse JOB_INPUT:', e);
+      process.exit(1);
     }
   }
 
-  const businessTypes = jobInput.businessTypes || ['plumbers', 'pet groomers', 'laundromats'];
-  const states = jobInput.states || ['California', 'Texas', 'Florida'];
-  const countPerType = jobInput.countPerType || 5;
+  const { 
+    searches = [], 
+    maxResultsPerSearch = 60, 
+    onlyWithoutWebsite = true 
+  } = jobInput;
 
-  console.log(`Business types: ${businessTypes.join(', ')}`);
-  console.log(`States: ${states.join(', ')}`);
-  console.log(`Count per type: ${countPerType}`);
+  if (searches.length === 0) {
+    console.error('No searches provided in job input');
+    process.exit(1);
+  }
+
+  console.log(`Processing ${searches.length} searches...`);
+  console.log(`Max results per search: ${maxResultsPerSearch}`);
+  console.log(`Only without website: ${onlyWithoutWebsite}`);
 
   const allBusinesses: Record<string, unknown>[] = [];
+  const seenPlaceIds = new Set<string>();
 
-  for (const businessType of businessTypes) {
-    for (const state of states) {
-      console.log(`\n--- Processing ${businessType} in ${state} ---`);
-      
-      const businesses = await findBusinessesWithoutWebsites(businessType, state, countPerType);
-      allBusinesses.push(...businesses);
-      
-      console.log(`Found ${businesses.length} businesses`);
+  for (let i = 0; i < searches.length; i++) {
+    const search = searches[i];
+    console.log(`\n[${i + 1}/${searches.length}] Searching: "${search.textQuery}" (type: ${search.includedType || 'any'})`);
+    
+    try {
+      // 1. Search with minimal fields (cheaper tier)
+      const places = await searchPlaces(search.textQuery, {
+        includedType: search.includedType,
+        maxResults: maxResultsPerSearch,
+      });
+
+      // 2. Filter to places without websites (if enabled)
+      const candidates = onlyWithoutWebsite 
+        ? places.filter(p => !p.websiteUri)
+        : places;
+
+      // 3. Deduplicate by place_id
+      const newCandidates = candidates.filter(p => !seenPlaceIds.has(p.id));
+      newCandidates.forEach(p => seenPlaceIds.add(p.id));
+
+      console.log(`  Found ${places.length} places, ${candidates.length} without websites, ${newCandidates.length} new`);
+
+      // 4. Get full details for new candidates
+      for (const place of newCandidates) {
+        try {
+          console.log(`    Getting details for: ${place.displayName?.text || place.id}...`);
+          const details = await getPlaceDetails(place.id);
+          const business = transformToBusinessRecord(details, search);
+          allBusinesses.push(business);
+        } catch (error) {
+          console.error(`    Error getting details for ${place.id}:`, error);
+        }
+      }
+    } catch (error) {
+      console.error(`  Error processing search:`, error);
     }
   }
 
@@ -300,11 +333,10 @@ async function main(): Promise<void> {
   await writeToDynamoDB(allBusinesses);
 
   console.log('\n=== Task Complete ===');
-  console.log(`Total businesses added: ${allBusinesses.length}`);
+  console.log(`Total businesses saved: ${allBusinesses.length}`);
 }
 
 main().catch(error => {
   console.error('Task failed:', error);
   process.exit(1);
 });
-

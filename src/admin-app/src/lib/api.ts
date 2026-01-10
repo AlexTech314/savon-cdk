@@ -331,6 +331,11 @@ export const startJob = async (input: StartJobInput): Promise<Job> => {
   // Transform to backend format
   const backendInput = {
     jobType: input.job_type,
+    // New search-based format
+    searches: input.searches,
+    maxResultsPerSearch: input.maxResultsPerSearch,
+    onlyWithoutWebsite: input.onlyWithoutWebsite,
+    // Legacy format (for backwards compatibility)
     businessTypes: input.business_types,
     states: input.states,
     countPerType: input.limit,

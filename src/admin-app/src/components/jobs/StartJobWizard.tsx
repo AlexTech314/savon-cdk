@@ -56,9 +56,9 @@ export const StartJobWizard: React.FC<StartJobWizardProps> = ({
 
   // Config state
   const [placesConfig, setPlacesConfig] = useState<PlacesConfig>({
-    businessTypes: [],
-    states: [],
-    countPerType: 20,
+    searches: [{ textQuery: '', includedType: '' }],
+    maxResultsPerSearch: 60,
+    onlyWithoutWebsite: true,
   });
   const [copyRules, setCopyRules] = useState<RuleGroup>(createEmptyRuleGroup());
   const [saveAsTemplate, setSaveAsTemplate] = useState(false);
@@ -88,7 +88,11 @@ export const StartJobWizard: React.FC<StartJobWizardProps> = ({
       setTimeout(() => {
         setCurrentStep('type');
         setJobType('places');
-        setPlacesConfig({ businessTypes: [], states: [], countPerType: 20 });
+        setPlacesConfig({
+          searches: [{ textQuery: '', includedType: '' }],
+          maxResultsPerSearch: 60,
+          onlyWithoutWebsite: true,
+        });
         setCopyRules(createEmptyRuleGroup());
         setSaveAsTemplate(false);
         setTemplateName('');
@@ -143,11 +147,14 @@ export const StartJobWizard: React.FC<StartJobWizardProps> = ({
       templateName: saveAsTemplate ? templateName : undefined,
     };
 
+    // Filter out empty searches
+    const validSearches = placesConfig.searches.filter(s => s.textQuery.trim());
+
     startJobMutation.mutate({
       job_type: jobType,
-      business_types: config.placesConfig?.businessTypes,
-      states: config.placesConfig?.states,
-      limit: config.placesConfig?.countPerType,
+      searches: validSearches,
+      maxResultsPerSearch: placesConfig.maxResultsPerSearch,
+      onlyWithoutWebsite: placesConfig.onlyWithoutWebsite,
     });
   };
 
@@ -205,7 +212,7 @@ export const StartJobWizard: React.FC<StartJobWizardProps> = ({
   const canProceed = (): boolean => {
     switch (currentStep) {
       case 'places':
-        return placesConfig.businessTypes.length > 0 && placesConfig.states.length > 0;
+        return placesConfig.searches.some(s => s.textQuery.trim().length > 0);
       case 'copy':
         return copyRules.rules.length > 0;
       default:

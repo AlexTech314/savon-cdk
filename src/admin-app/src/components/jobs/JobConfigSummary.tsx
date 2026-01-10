@@ -1,9 +1,8 @@
 import React from 'react';
-import { JobConfig, BUSINESS_TYPES, US_STATES, RULE_FIELDS, RULE_OPERATORS } from '@/types/jobs';
-import { isRuleGroup, ruleGroupToHumanReadable } from '@/lib/ruleEngine';
+import { JobConfig, PLACE_TYPES, RULE_FIELDS, RULE_OPERATORS } from '@/types/jobs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { MapPin, Building2, FileText, Hash, Clock } from 'lucide-react';
+import { MapPin, Search, FileText, Hash, Clock, Filter } from 'lucide-react';
 
 interface JobConfigSummaryProps {
   config: JobConfig;
@@ -13,21 +12,25 @@ export const JobConfigSummary: React.FC<JobConfigSummaryProps> = ({ config }) =>
   const getEstimatedTime = () => {
     let records = 0;
     if (config.placesConfig) {
-      records += config.placesConfig.businessTypes.length * 
-                 config.placesConfig.states.length * 
-                 config.placesConfig.countPerType;
+      const validSearches = config.placesConfig.searches.filter(s => s.textQuery.trim());
+      const maxResults = config.placesConfig.maxResultsPerSearch ?? 60;
+      records += validSearches.length * maxResults;
     }
     if (config.copyConfig) {
       records += 50; // Mock estimate for copy processing
     }
     const minutes = Math.ceil(records / 15);
-    return `~${minutes} minutes for ${records} records`;
+    return `~${minutes} minutes for up to ${records} records`;
   };
 
   const jobTypeLabels = {
     places: 'Google Places Search',
     copy: 'Generate LLM Copy',
     both: 'Full Pipeline (Places → Copy)',
+  };
+
+  const getPlaceTypeLabel = (value: string) => {
+    return PLACE_TYPES.find(t => t.value === value)?.label || value;
   };
 
   return (
@@ -46,42 +49,44 @@ export const JobConfigSummary: React.FC<JobConfigSummaryProps> = ({ config }) =>
               Places Search Configuration
             </h4>
             
-            <div className="space-y-2 text-sm">
+            <div className="space-y-3 text-sm">
               <div className="flex items-start gap-2">
-                <Building2 className="h-4 w-4 text-muted-foreground mt-0.5" />
-                <div>
-                  <span className="text-muted-foreground">Business Types: </span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {config.placesConfig.businessTypes.map((type) => (
-                      <Badge key={type} variant="outline" className="text-xs">
-                        {type}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2">
-                <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
-                <div>
-                  <span className="text-muted-foreground">States: </span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {config.placesConfig.states.map((code) => {
-                      const state = US_STATES.find((s) => s.code === code);
-                      return (
-                        <Badge key={code} variant="outline" className="text-xs">
-                          {state?.name || code}
-                        </Badge>
-                      );
-                    })}
+                <Search className="h-4 w-4 text-muted-foreground mt-0.5" />
+                <div className="flex-1">
+                  <span className="text-muted-foreground">Search Queries: </span>
+                  <div className="space-y-1.5 mt-1">
+                    {config.placesConfig.searches
+                      .filter(s => s.textQuery.trim())
+                      .map((search, index) => (
+                        <div key={index} className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className="text-xs font-mono">
+                            "{search.textQuery}"
+                          </Badge>
+                          {search.includedType && (
+                            <Badge variant="secondary" className="text-xs">
+                              {getPlaceTypeLabel(search.includedType)}
+                            </Badge>
+                          )}
+                        </div>
+                      ))}
                   </div>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
                 <Hash className="h-4 w-4 text-muted-foreground" />
-                <span className="text-muted-foreground">Results per type: </span>
-                <span className="font-medium">{config.placesConfig.countPerType}</span>
+                <span className="text-muted-foreground">Max results per search: </span>
+                <span className="font-medium">{config.placesConfig.maxResultsPerSearch ?? 60}</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <span className="text-muted-foreground">Filter: </span>
+                <span className="font-medium">
+                  {config.placesConfig.onlyWithoutWebsite !== false
+                    ? 'Only businesses without websites'
+                    : 'All businesses'}
+                </span>
               </div>
             </div>
           </CardContent>

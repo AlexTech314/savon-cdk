@@ -1,9 +1,17 @@
 import React from 'react';
-import { BUSINESS_TYPES, US_STATES, PlacesConfig } from '@/types/jobs';
-import { MultiSelect } from '@/components/ui/multi-select';
+import { PLACE_TYPES, PlacesConfig, SearchQuery } from '@/types/jobs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Plus, Trash2 } from 'lucide-react';
 
 interface PlacesConfigFormProps {
   config: PlacesConfig;
@@ -22,67 +30,116 @@ export const PlacesConfigForm: React.FC<PlacesConfigFormProps> = ({
   templateName,
   onTemplateNameChange,
 }) => {
-  const businessTypeOptions = BUSINESS_TYPES.map((type) => ({
-    value: type,
-    label: type,
-  }));
+  const searches = config.searches || [{ textQuery: '', includedType: '' }];
 
-  const stateOptions = US_STATES.map((state) => ({
-    value: state.code,
-    label: state.name,
-  }));
+  const addSearch = () => {
+    onChange({
+      ...config,
+      searches: [...searches, { textQuery: '', includedType: '' }],
+    });
+  };
+
+  const removeSearch = (index: number) => {
+    onChange({
+      ...config,
+      searches: searches.filter((_, i) => i !== index),
+    });
+  };
+
+  const updateSearch = (index: number, field: keyof SearchQuery, value: string) => {
+    const updated = [...searches];
+    updated[index] = { ...updated[index], [field]: value };
+    onChange({ ...config, searches: updated });
+  };
 
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <Label>Business Types</Label>
-        <MultiSelect
-          options={businessTypeOptions}
-          selected={config.businessTypes}
-          onChange={(selected) =>
-            onChange({ ...config, businessTypes: selected })
-          }
-          placeholder="Select business types..."
-          searchPlaceholder="Search types..."
-        />
-        <p className="text-xs text-muted-foreground">
-          Select the types of businesses to search for
+        <Label>Search Queries</Label>
+        <p className="text-sm text-muted-foreground">
+          Search for businesses using any text query - locations, business names, 
+          descriptions, or combinations. Optionally filter by business type.
         </p>
       </div>
 
-      <div className="space-y-2">
-        <Label>States</Label>
-        <MultiSelect
-          options={stateOptions}
-          selected={config.states}
-          onChange={(selected) => onChange({ ...config, states: selected })}
-          placeholder="Select states..."
-          searchPlaceholder="Search states..."
-        />
-        <p className="text-xs text-muted-foreground">
-          Select the states to search in
-        </p>
+      <div className="space-y-3">
+        {searches.map((search, index) => (
+          <div key={index} className="flex gap-2 items-center">
+            <Input
+              placeholder="Search anything: Austin TX, 90210, pet groomers near me..."
+              value={search.textQuery}
+              onChange={(e) => updateSearch(index, 'textQuery', e.target.value)}
+              className="flex-1"
+            />
+            <Select
+              value={search.includedType || '_any'}
+              onValueChange={(value) => updateSearch(index, 'includedType', value === '_any' ? '' : value)}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue placeholder="Any type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_any">Any type</SelectItem>
+                {PLACE_TYPES.map(type => (
+                  <SelectItem key={type.value} value={type.value}>
+                    {type.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => removeSearch(index)}
+              disabled={searches.length === 1}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ))}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="countPerType">Results Per Type</Label>
-        <Input
-          id="countPerType"
-          type="number"
-          min={1}
-          max={100}
-          value={config.countPerType}
-          onChange={(e) =>
-            onChange({
-              ...config,
-              countPerType: Math.min(100, Math.max(1, Number(e.target.value))),
-            })
-          }
-          className="w-32"
-        />
-        <p className="text-xs text-muted-foreground">
-          Number of businesses to fetch per type (1-100)
-        </p>
+      <Button variant="outline" onClick={addSearch} className="gap-2">
+        <Plus className="h-4 w-4" />
+        Add Search
+      </Button>
+
+      <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border">
+        <div className="space-y-2">
+          <Label htmlFor="maxResults">Max Results Per Search</Label>
+          <Input
+            id="maxResults"
+            type="number"
+            min={1}
+            max={60}
+            value={config.maxResultsPerSearch ?? 60}
+            onChange={(e) =>
+              onChange({
+                ...config,
+                maxResultsPerSearch: Math.min(60, Math.max(1, Number(e.target.value))),
+              })
+            }
+            className="w-32"
+          />
+          <p className="text-xs text-muted-foreground">
+            1-60 (uses pagination)
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center space-x-2 pt-6">
+            <Checkbox
+              id="onlyWithoutWebsite"
+              checked={config.onlyWithoutWebsite ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...config, onlyWithoutWebsite: !!checked })
+              }
+            />
+            <Label htmlFor="onlyWithoutWebsite" className="cursor-pointer">
+              Only businesses without websites
+            </Label>
+          </div>
+        </div>
       </div>
 
       <div className="border-t border-border pt-4 space-y-3">
@@ -103,7 +160,7 @@ export const PlacesConfigForm: React.FC<PlacesConfigFormProps> = ({
               id="templateName"
               value={templateName}
               onChange={(e) => onTemplateNameChange(e.target.value)}
-              placeholder="e.g., Florida Plumbers Pipeline"
+              placeholder="e.g., Texas Plumbers Search"
             />
           </div>
         )}

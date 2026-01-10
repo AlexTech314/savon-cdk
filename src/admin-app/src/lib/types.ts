@@ -61,8 +61,18 @@ export interface JobFilters {
   job_type?: Job['job_type'];
 }
 
+export interface SearchQuery {
+  textQuery: string;
+  includedType?: string;
+}
+
 export interface StartJobInput {
   job_type: Job['job_type'];
+  // New search-based format
+  searches?: SearchQuery[];
+  maxResultsPerSearch?: number;
+  onlyWithoutWebsite?: boolean;
+  // Legacy format (deprecated)
   business_types?: string[];
   states?: string[];
   limit?: number;
