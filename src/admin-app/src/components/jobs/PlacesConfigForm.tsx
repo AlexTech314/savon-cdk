@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { PLACE_TYPES, PlacesConfig, SearchQuery } from '@/types/jobs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,7 +7,9 @@ import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -31,6 +33,17 @@ export const PlacesConfigForm: React.FC<PlacesConfigFormProps> = ({
   onTemplateNameChange,
 }) => {
   const searches = config.searches || [{ textQuery: '', includedType: '' }];
+
+  // Group place types by category
+  const groupedTypes = useMemo(() => {
+    const groups: Record<string, typeof PLACE_TYPES> = {};
+    PLACE_TYPES.forEach(type => {
+      const category = type.category || 'Other';
+      if (!groups[category]) groups[category] = [];
+      groups[category].push(type);
+    });
+    return groups;
+  }, []);
 
   const addSearch = () => {
     onChange({
@@ -78,12 +91,19 @@ export const PlacesConfigForm: React.FC<PlacesConfigFormProps> = ({
               <SelectTrigger className="w-48">
                 <SelectValue placeholder="Any type" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-80">
                 <SelectItem value="_any">Any type</SelectItem>
-                {PLACE_TYPES.map(type => (
-                  <SelectItem key={type.value} value={type.value}>
-                    {type.label}
-                  </SelectItem>
+                {Object.entries(groupedTypes).map(([category, types]) => (
+                  <SelectGroup key={category}>
+                    <SelectLabel className="text-xs font-semibold text-muted-foreground">
+                      {category}
+                    </SelectLabel>
+                    {types.map(type => (
+                      <SelectItem key={type.value} value={type.value}>
+                        {type.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>
