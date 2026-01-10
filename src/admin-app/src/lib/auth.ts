@@ -1,53 +1,96 @@
+import { 
+  signIn as amplifySignIn, 
+  signOut as amplifySignOut, 
+  getCurrentUser,
+  fetchAuthSession,
+} from 'aws-amplify/auth';
 import { User } from './types';
-
-const AUTH_KEY = 'savon_auth';
 
 export interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
 }
 
-export const getStoredAuth = (): AuthState => {
+/**
+ * Get the current authenticated user
+ */
+export async function getCurrentAuthUser(): Promise<User | null> {
   try {
-    const stored = localStorage.getItem(AUTH_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return { user: parsed, isAuthenticated: true };
-    }
+    const user = await getCurrentUser();
+    return {
+      email: user.signInDetails?.loginId || user.username,
+      name: user.username,
+    };
   } catch {
-    // Invalid stored data
+    return null;
   }
-  return { user: null, isAuthenticated: false };
-};
+}
 
-export const login = async (email: string, password: string): Promise<User> => {
-  // Simulate network delay
-  await new Promise(resolve => setTimeout(resolve, 500));
+/**
+ * Check if there's a valid session
+ */
+export async function checkAuthSession(): Promise<AuthState> {
+  try {
+    const session = await fetchAuthSession();
+    if (session.tokens?.idToken) {
+      const user = await getCurrentAuthUser();
+      return { user, isAuthenticated: !!user };
+    }
+    return { user: null, isAuthenticated: false };
+  } catch {
+    return { user: null, isAuthenticated: false };
+  }
+}
+
+/**
+ * Sign in with email and password
+ */
+export async function login(email: string, password: string): Promise<User> {
+  const result = await amplifySignIn({ username: email, password });
   
-  // Mock authentication - check for @savondesigns.com domain and demo123 password
-  if (!email.endsWith('@savondesigns.com')) {
-    throw new Error('Invalid email domain. Please use a @savondesigns.com email.');
+  if (result.isSignedIn) {
+    const user = await getCurrentAuthUser();
+    if (!user) {
+      throw new Error('Failed to get user after sign in');
+    }
+    return user;
   }
   
-  if (password !== 'demo123') {
-    throw new Error('Invalid password.');
+  // Handle MFA or other challenges if needed
+  if (result.nextStep) {
+    throw new Error(`Additional step required: ${result.nextStep.signInStep}`);
   }
   
-  const user: User = {
-    email,
-    name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-  };
-  
-  localStorage.setItem(AUTH_KEY, JSON.stringify(user));
-  
-  return user;
-};
+  throw new Error('Sign in failed');
+}
 
-export const logout = (): void => {
-  localStorage.removeItem(AUTH_KEY);
-};
+/**
+ * Sign out the current user
+ */
+export async function logout(): Promise<void> {
+  await amplifySignOut();
+}
 
-export const validateToken = (): boolean => {
-  const { isAuthenticated } = getStoredAuth();
-  return isAuthenticated;
-};
+/**
+ * Get the ID token for API authorization
+ */
+export async function getIdToken(): Promise<string | null> {
+  try {
+    const session = await fetchAuthSession();
+    return session.tokens?.idToken?.toString() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the access token
+ */
+export async function getAccessToken(): Promise<string | null> {
+  try {
+    const session = await fetchAuthSession();
+    return session.tokens?.accessToken?.toString() || null;
+  } catch {
+    return null;
+  }
+}

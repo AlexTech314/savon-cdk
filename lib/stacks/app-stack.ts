@@ -51,6 +51,7 @@ export class AppStack extends cdk.Stack {
     const previewDomain = `preview-alpha.${hostedZoneName}`;
     const adminDomain = `admin-alpha.${hostedZoneName}`;
     const apiDomain = `api-alpha.${hostedZoneName}`;
+    const authDomain = `auth-alpha.${hostedZoneName}`;
 
     // ============================================================
     // Secrets (Pre-existing in AWS Secrets Manager)
@@ -232,8 +233,21 @@ export class AppStack extends cdk.Stack {
       },
     });
 
-    userPool.addDomain('CognitoDomain', {
-      cognitoDomain: { domainPrefix: 'savondesigns-alpha' },
+    // Custom domain for Cognito hosted UI
+    const cognitoDomain = userPool.addDomain('CognitoDomain', {
+      customDomain: {
+        domainName: authDomain,
+        certificate: certificate,
+      },
+    });
+
+    // Route 53 A record for Cognito custom domain
+    new route53.ARecord(this, 'AuthARecord', {
+      zone: hostedZone,
+      recordName: 'auth-alpha',
+      target: route53.RecordTarget.fromAlias(
+        new route53Targets.UserPoolDomainTarget(cognitoDomain)
+      ),
     });
 
     // ============================================================
@@ -537,8 +551,8 @@ export class AppStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'CognitoDomainUrl', {
-      value: `https://savondesigns-alpha.auth.${this.region}.amazoncognito.com`,
-      description: 'Cognito Hosted UI URL',
+      value: `https://${authDomain}`,
+      description: 'Cognito Custom Auth Domain',
     });
 
     new cdk.CfnOutput(this, 'UiUrl', {

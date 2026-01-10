@@ -1,5 +1,7 @@
-// Preview API types and data fetching
-// CSV import removed - will use API in production
+/**
+ * Preview App API
+ * Fetches business data from the backend and transforms it to PreviewData format
+ */
 
 export interface PreviewData {
   id: string;
@@ -82,162 +84,71 @@ export interface PreviewData {
 }
 
 // ============================================
-// CSV PARSING
+// API Configuration
 // ============================================
 
-interface CsvRow {
-  // Core business info
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://api-alpha.savondesigns.com';
+
+// ============================================
+// Backend Response Types
+// ============================================
+
+interface BackendBusiness {
   place_id: string;
-  friendly_slug: string;
+  friendly_slug?: string;
   state: string;
   business_type: string;
   business_name: string;
-  phone: string;
+  phone?: string;
   address: string;
   city: string;
-  rating: string;
-  rating_count: string;
-  hours: string;
-  reviews: string;
-  photos: string;
-  google_maps_uri: string;
-  editorial_summary: string;
-  website: string;
-  price_level: string;
-  business_status: string;
-  types: string;
-  latitude: string;
-  longitude: string;
-  street: string;
-  zip: string;
-  country: string;
-  international_phone: string;
-  primary_type: string;
-  // Pre-generated copy
-  copy_hero_headline: string;
-  copy_hero_subheadline: string;
-  copy_hero_primary_cta: string;
-  copy_hero_secondary_cta: string;
-  copy_hero_trust_badges: string;
-  copy_services_tagline: string;
-  copy_services_headline: string;
-  copy_services_subheadline: string;
-  copy_services_items: string;
-  copy_why_tagline: string;
-  copy_why_headline: string;
-  copy_why_benefits: string;
-  copy_area_headline: string;
-  copy_area_hours_headline: string;
-  copy_area_hours_subtext: string;
-  copy_area_phone_headline: string;
-  copy_emergency_headline: string;
-  copy_emergency_subheadline: string;
-  copy_emergency_cta: string;
-  copy_contact_tagline: string;
-  copy_contact_trust_badges: string;
-  copy_contact_serving_note: string;
-  copy_seo_title: string;
-  copy_seo_description: string;
-  copy_seo_keywords: string;
-  copy_seo_schema_type: string;
-  copy_theme_primary: string;
-  copy_theme_primary_dark: string;
-  copy_theme_accent: string;
-  copy_theme_accent_hover: string;
-}
-
-function parseCSV(csvText: string): CsvRow[] {
-  const logicalLines = splitCsvIntoLogicalLines(csvText);
-  if (logicalLines.length < 2) return [];
-
-  const headerLine = logicalLines[0];
-  const headers = parseCSVLine(headerLine);
-
-  const rows: CsvRow[] = [];
-
-  for (let i = 1; i < logicalLines.length; i++) {
-    const line = logicalLines[i].trim();
-    if (!line) continue;
-
-    const values = parseCSVLine(line);
-    if (values.length !== headers.length) continue;
-
-    const row: Record<string, string> = {};
-    headers.forEach((header, index) => {
-      row[header] = values[index] || "";
-    });
-
-    rows.push(row as unknown as CsvRow);
-  }
-
-  return rows;
-}
-
-function splitCsvIntoLogicalLines(csvText: string): string[] {
-  const lines: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < csvText.length; i++) {
-    const char = csvText[i];
-
-    if (char === '"') {
-      if (inQuotes && csvText[i + 1] === '"') {
-        current += '""';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-        current += char;
-      }
-    } else if (char === "\n" && !inQuotes) {
-      lines.push(current);
-      current = "";
-    } else if (char === "\r") {
-      continue;
-    } else {
-      current += char;
-    }
-  }
-
-  if (current.trim()) {
-    lines.push(current);
-  }
-
-  return lines;
-}
-
-function parseCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-
-    if (char === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (char === "," && !inQuotes) {
-      result.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-
-  result.push(current);
-  return result;
+  rating?: number;
+  rating_count?: number;
+  hours?: string;
+  reviews?: string;
+  photo_urls?: string;
+  google_maps_uri?: string;
+  editorial_summary?: string;
+  street?: string;
+  zip_code?: string;
+  // Copy fields
+  copy_hero_headline?: string;
+  copy_hero_subheadline?: string;
+  copy_hero_primary_cta?: string;
+  copy_hero_secondary_cta?: string;
+  copy_hero_trust_badges?: string;
+  copy_services_tagline?: string;
+  copy_services_headline?: string;
+  copy_services_subheadline?: string;
+  copy_services_items?: string;
+  copy_why_tagline?: string;
+  copy_why_headline?: string;
+  copy_why_benefits?: string;
+  copy_area_headline?: string;
+  copy_area_hours_headline?: string;
+  copy_area_hours_subtext?: string;
+  copy_area_phone_headline?: string;
+  copy_emergency_headline?: string;
+  copy_emergency_subheadline?: string;
+  copy_emergency_cta?: string;
+  copy_contact_tagline?: string;
+  copy_contact_trust_badges?: string;
+  copy_contact_serving_note?: string;
+  copy_seo_title?: string;
+  copy_seo_description?: string;
+  copy_seo_keywords?: string;
+  copy_seo_schema_type?: string;
+  copy_theme_primary?: string;
+  copy_theme_primary_dark?: string;
+  copy_theme_accent?: string;
+  copy_theme_accent_hover?: string;
 }
 
 // ============================================
-// DATA TRANSFORMATION
+// Helper Functions
 // ============================================
 
-function parseHours(hoursString: string): { day: string; time: string; isClosed: boolean }[] {
+function parseHours(hoursString?: string): { day: string; time: string; isClosed: boolean }[] {
   if (!hoursString) {
     return [
       { day: "Monday", time: "9:00 AM - 5:00 PM", isClosed: false },
@@ -294,27 +205,38 @@ function formatHoursDisplay(hours: { day: string; time: string; isClosed: boolea
   return openDays.length === 7 ? "Open 7 Days a Week" : `${openDays.length} Days a Week`;
 }
 
-function parseReviews(reviewsString: string): { text: string; rating: number; author: string; url?: string }[] {
+function parseReviews(reviewsString?: string): { text: string; rating: number; author: string; url?: string }[] {
   if (!reviewsString) return [];
+
+  try {
+    // Try parsing as JSON first (new format)
+    const parsed = JSON.parse(reviewsString);
+    if (Array.isArray(parsed)) {
+      return parsed.slice(0, 3).map((r: { text?: string; authorDisplayName?: string; rating?: number; authorUri?: string }) => ({
+        text: r.text || '',
+        rating: r.rating || 5,
+        author: r.authorDisplayName || 'Verified Customer',
+        url: r.authorUri,
+      }));
+    }
+  } catch {
+    // Fall back to pipe-separated format
+  }
 
   const reviews: { text: string; rating: number; author: string; url?: string }[] = [];
   const reviewParts = reviewsString.split(" | ");
 
   for (const part of reviewParts) {
-    // Extract rating from [5★] pattern
     const ratingMatch = part.match(/\[(\d)★\]/);
     const rating = ratingMatch ? parseInt(ratingMatch[1]) : 5;
 
-    // Extract author and URL from — Author Name (URL) pattern
     const authorMatch = part.match(/— ([^(]+)\s*\(([^)]+)\)/);
     const author = authorMatch ? authorMatch[1].trim() : "Verified Customer";
     const url = authorMatch ? authorMatch[2].trim() : undefined;
 
-    // Extract text (everything in quotes)
     const textMatch = part.match(/"([^"]+)"/);
     let text = textMatch ? textMatch[1] : part;
 
-    // Clean up text - truncate if too long
     text = text.substring(0, 300);
     if (text.length === 300) {
       text = text.substring(0, text.lastIndexOf(" ")) + "...";
@@ -328,21 +250,30 @@ function parseReviews(reviewsString: string): { text: string; rating: number; au
   return reviews.slice(0, 3);
 }
 
-function getFirstPhoto(photosString: string): string {
+function getFirstPhoto(photosString?: string): string {
   if (!photosString) return "/placeholder.svg";
+
+  try {
+    // Try parsing as JSON first
+    const parsed = JSON.parse(photosString);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed[0];
+    }
+  } catch {
+    // Fall back to pipe-separated format
+  }
 
   const photos = photosString.split(" | ");
   return photos[0] || "/placeholder.svg";
 }
 
-function extractZipFromAddress(address: string, zip: string): string {
+function extractZipFromAddress(address: string, zip?: string): string {
   if (zip) return zip;
-
   const zipMatch = address.match(/\b(\d{5})\b/);
   return zipMatch ? zipMatch[1] : "";
 }
 
-function parseJsonArray<T>(jsonString: string, fallback: T[]): T[] {
+function parseJsonArray<T>(jsonString: string | undefined, fallback: T[]): T[] {
   if (!jsonString) return fallback;
   try {
     return JSON.parse(jsonString) as T[];
@@ -351,24 +282,26 @@ function parseJsonArray<T>(jsonString: string, fallback: T[]): T[] {
   }
 }
 
-function parseTrustBadges(badgesString: string): string[] {
+function parseTrustBadges(badgesString?: string): string[] {
   if (!badgesString) return [];
-  // Trust badges are pipe-separated in the CSV
   return badgesString.split(" | ").map(b => b.trim()).filter(Boolean);
 }
 
-function transformRowToPreviewData(row: CsvRow): PreviewData {
-  const hours = parseHours(row.hours);
-  const hoursDisplay = formatHoursDisplay(hours);
-  const reviews = parseReviews(row.reviews);
-  const rating = parseFloat(row.rating) || 5.0;
-  const ratingCount = parseInt(row.rating_count) || 0;
-  const zipCode = extractZipFromAddress(row.address, row.zip);
-  const city = row.city || "Your City";
-  const state = row.state || "";
-  const phone = row.phone || "";
+// ============================================
+// Transform Backend Response to PreviewData
+// ============================================
 
-  // Parse services and benefits from JSON in CSV
+function transformToPreviewData(b: BackendBusiness): PreviewData {
+  const hours = parseHours(b.hours);
+  const hoursDisplay = formatHoursDisplay(hours);
+  const reviews = parseReviews(b.reviews);
+  const rating = b.rating || 5.0;
+  const ratingCount = b.rating_count || 0;
+  const zipCode = extractZipFromAddress(b.address, b.zip_code);
+  const city = b.city || "Your City";
+  const state = b.state || "";
+  const phone = b.phone || "";
+
   const defaultServices = [
     { icon: "Star", title: "Quality Service", description: "We deliver exceptional service tailored to your specific needs." },
     { icon: "Users", title: "Expert Team", description: "Our experienced professionals bring expertise to every project." },
@@ -381,17 +314,17 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
     { icon: "ThumbsUp", title: "Quality Guaranteed", description: "We stand behind our work with a satisfaction guarantee." },
   ];
 
-  const services = parseJsonArray(row.copy_services_items, defaultServices);
-  const benefits = parseJsonArray(row.copy_why_benefits, defaultBenefits);
-  const heroTrustBadges = parseTrustBadges(row.copy_hero_trust_badges);
-  const contactTrustBadges = parseTrustBadges(row.copy_contact_trust_badges);
+  const services = parseJsonArray(b.copy_services_items, defaultServices);
+  const benefits = parseJsonArray(b.copy_why_benefits, defaultBenefits);
+  const heroTrustBadges = parseTrustBadges(b.copy_hero_trust_badges);
+  const contactTrustBadges = parseTrustBadges(b.copy_contact_trust_badges);
 
   return {
-    id: row.place_id,
-    businessName: row.business_name,
-    businessType: row.business_type,
+    id: b.place_id,
+    businessName: b.business_name,
+    businessType: b.business_type,
     phone,
-    address: row.address,
+    address: b.address,
     city,
     state,
     zipCode,
@@ -399,18 +332,18 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
     ratingCount,
     hoursDisplay,
     hours,
-    heroImage: getFirstPhoto(row.photos),
+    heroImage: getFirstPhoto(b.photo_urls),
     seo: {
-      title: row.copy_seo_title || `${row.business_name} | ${row.business_type} in ${city}`,
-      description: row.copy_seo_description || `${row.business_name} is your trusted ${row.business_type.toLowerCase()} in ${city}. Call ${phone || "today"} for professional service!`,
-      keywords: row.copy_seo_keywords || `${row.business_type.toLowerCase()}, ${city}, ${state}`,
-      schemaType: row.copy_seo_schema_type || "LocalBusiness",
+      title: b.copy_seo_title || `${b.business_name} | ${b.business_type} in ${city}`,
+      description: b.copy_seo_description || `${b.business_name} is your trusted ${b.business_type.toLowerCase()} in ${city}. Call ${phone || "today"} for professional service!`,
+      keywords: b.copy_seo_keywords || `${b.business_type.toLowerCase()}, ${city}, ${state}`,
+      schemaType: b.copy_seo_schema_type || "LocalBusiness",
     },
     theme: {
-      primary: row.copy_theme_primary || "220 60% 45%",
-      primaryDark: row.copy_theme_primary_dark || "220 65% 32%",
-      accent: row.copy_theme_accent || "30 90% 50%",
-      accentHover: row.copy_theme_accent_hover || "30 90% 42%",
+      primary: b.copy_theme_primary || "220 60% 45%",
+      primaryDark: b.copy_theme_primary_dark || "220 65% 32%",
+      accent: b.copy_theme_accent || "30 90% 50%",
+      accentHover: b.copy_theme_accent_hover || "30 90% 42%",
       background: "210 40% 98%",
       foreground: "222 47% 11%",
       graySection: "220 14% 96%",
@@ -418,29 +351,29 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
       bodyFont: "Inter",
     },
     hero: {
-      headline: row.copy_hero_headline || `Professional ${row.business_type} in ${city}`,
-      subheadline: row.copy_hero_subheadline || "Quality Service You Can Trust",
-      primaryCta: row.copy_hero_primary_cta || (phone ? `Call ${phone}` : "Contact Us"),
-      secondaryCta: row.copy_hero_secondary_cta || "Learn More",
+      headline: b.copy_hero_headline || `Professional ${b.business_type} in ${city}`,
+      subheadline: b.copy_hero_subheadline || "Quality Service You Can Trust",
+      primaryCta: b.copy_hero_primary_cta || (phone ? `Call ${phone}` : "Contact Us"),
+      secondaryCta: b.copy_hero_secondary_cta || "Learn More",
       trustBadges: heroTrustBadges.length > 0 ? heroTrustBadges : ["Licensed & Insured", "Quality Service", "Free Consultation"],
     },
     servicesSection: {
-      tagline: row.copy_services_tagline || "OUR SERVICES",
-      headline: row.copy_services_headline || "Our Expert Services",
-      subheadline: row.copy_services_subheadline || `${row.business_name} delivers top-quality service throughout ${city}.`,
+      tagline: b.copy_services_tagline || "OUR SERVICES",
+      headline: b.copy_services_headline || "Our Expert Services",
+      subheadline: b.copy_services_subheadline || `${b.business_name} delivers top-quality service throughout ${city}.`,
       services,
     },
     whyChooseUs: {
-      tagline: row.copy_why_tagline || "WHY CHOOSE US",
-      headline: row.copy_why_headline || `Your Trusted ${city} ${row.business_type}`,
+      tagline: b.copy_why_tagline || "WHY CHOOSE US",
+      headline: b.copy_why_headline || `Your Trusted ${city} ${b.business_type}`,
       benefits,
     },
     serviceArea: {
-      headline: row.copy_area_headline || `Serving ${city} & Surrounding Areas`,
-      addressDisplay: row.street ? `${row.street}, ${city}${state ? `, ${state}` : ""}` : row.address,
-      hoursHeadline: row.copy_area_hours_headline || hoursDisplay,
-      hoursSubtext: row.copy_area_hours_subtext || (hours.some(h => h.time.toLowerCase().includes("24")) ? "Emergency services available around the clock" : "Call to schedule an appointment"),
-      phoneHeadline: row.copy_area_phone_headline || (phone ? "Call Today" : "Contact Us"),
+      headline: b.copy_area_headline || `Serving ${city} & Surrounding Areas`,
+      addressDisplay: b.street ? `${b.street}, ${city}${state ? `, ${state}` : ""}` : b.address,
+      hoursHeadline: b.copy_area_hours_headline || hoursDisplay,
+      hoursSubtext: b.copy_area_hours_subtext || (hours.some(h => h.time.toLowerCase().includes("24")) ? "Emergency services available around the clock" : "Call to schedule an appointment"),
+      phoneHeadline: b.copy_area_phone_headline || (phone ? "Call Today" : "Contact Us"),
     },
     reviewsSection: {
       tagline: "TESTIMONIALS",
@@ -453,13 +386,13 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
       ],
     },
     emergencyCta: {
-      headline: row.copy_emergency_headline || "Need Assistance?",
-      subheadline: row.copy_emergency_subheadline || "Our team is ready to help. Contact us today to discuss your needs.",
-      ctaText: row.copy_emergency_cta || (phone ? `Call ${phone} Now` : "Contact Us Now"),
+      headline: b.copy_emergency_headline || "Need Assistance?",
+      subheadline: b.copy_emergency_subheadline || "Our team is ready to help. Contact us today to discuss your needs.",
+      ctaText: b.copy_emergency_cta || (phone ? `Call ${phone} Now` : "Contact Us Now"),
     },
     contactSection: {
-      tagline: row.copy_contact_tagline || "GET STARTED",
-      headline: row.business_name,
+      tagline: b.copy_contact_tagline || "GET STARTED",
+      headline: b.business_name,
       trustBadges: contactTrustBadges.length > 0 ? contactTrustBadges : [
         "Licensed & Insured",
         "Professional Team",
@@ -467,10 +400,10 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
         "Free Estimates",
         `Serving ${city}`,
       ],
-      servingNote: row.copy_contact_serving_note || `Proudly serving ${city}${state ? `, ${state}` : ""} and surrounding areas with professional ${row.business_type.toLowerCase()} services.`,
+      servingNote: b.copy_contact_serving_note || `Proudly serving ${city}${state ? `, ${state}` : ""} and surrounding areas with professional ${b.business_type.toLowerCase()} services.`,
     },
     footer: {
-      copyright: `© ${new Date().getFullYear()} ${row.business_name}. All rights reserved.`,
+      copyright: `© ${new Date().getFullYear()} ${b.business_name}. All rights reserved.`,
       links: [
         { label: "Privacy Policy", href: "#" },
         { label: "Terms of Service", href: "#" },
@@ -480,84 +413,45 @@ function transformRowToPreviewData(row: CsvRow): PreviewData {
 }
 
 // ============================================
-// DATA LOADING & CACHING
-// ============================================
-
-let cachedData: Map<string, PreviewData> | null = null;
-let cachedSlugIndex: Map<string, string> | null = null;
-
-function loadData(): { dataById: Map<string, PreviewData>; slugToId: Map<string, string> } {
-  if (cachedData && cachedSlugIndex) {
-    return { dataById: cachedData, slugToId: cachedSlugIndex };
-  }
-
-  // CSV data removed - return empty maps
-  // In production, data will come from the API
-  const dataById = new Map<string, PreviewData>();
-  const slugToId = new Map<string, string>();
-
-  cachedData = dataById;
-  cachedSlugIndex = slugToId;
-
-  return { dataById, slugToId };
-}
-
-// ============================================
-// API FUNCTIONS
+// API Functions
 // ============================================
 
 /**
  * Fetch preview data by ID (place_id) or friendly_slug
  */
 export async function fetchPreviewData(idOrSlug: string): Promise<PreviewData> {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "";
-  const useMockData = import.meta.env.DEV || !apiBaseUrl;
-
-  if (useMockData) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
-    const { dataById, slugToId } = loadData();
-
-    let data = dataById.get(idOrSlug);
-
-    if (!data) {
-      const placeId = slugToId.get(idOrSlug);
-      if (placeId) {
-        data = dataById.get(placeId);
-      }
-    }
-
-    if (!data) {
-      throw new Error(`Preview not found for id: ${idOrSlug}`);
-    }
-
-    return data;
+  // Try fetching by slug first (more user-friendly URLs)
+  let response = await fetch(`${API_BASE_URL}/businesses/slug/${encodeURIComponent(idOrSlug)}`);
+  
+  // If not found by slug, try by place_id
+  if (!response.ok && response.status === 404) {
+    response = await fetch(`${API_BASE_URL}/businesses/${encodeURIComponent(idOrSlug)}`);
   }
-
-  const response = await fetch(`${apiBaseUrl}/api/preview/${idOrSlug}`);
-
+  
   if (!response.ok) {
     throw new Error(`Failed to fetch preview: ${response.statusText}`);
   }
-
-  return response.json();
+  
+  const business: BackendBusiness = await response.json();
+  return transformToPreviewData(business);
 }
 
 /**
  * Get all available business IDs and slugs
  */
-export function getAvailableBusinessIds(): { placeId: string; slug: string; name: string }[] {
-  const { dataById, slugToId } = loadData();
-
-  const reverseSlugIndex = new Map<string, string>();
-  for (const [slug, placeId] of slugToId.entries()) {
-    reverseSlugIndex.set(placeId, slug);
+export async function getAvailableBusinessIds(): Promise<{ placeId: string; slug: string; name: string }[]> {
+  const response = await fetch(`${API_BASE_URL}/businesses?limit=100`);
+  
+  if (!response.ok) {
+    return [];
   }
-
-  return Array.from(dataById.entries()).map(([placeId, data]) => ({
-    placeId,
-    slug: reverseSlugIndex.get(placeId) || "",
-    name: data.businessName,
+  
+  const data: { items: BackendBusiness[] } = await response.json();
+  
+  return data.items.map(b => ({
+    placeId: b.place_id,
+    slug: b.friendly_slug || '',
+    name: b.business_name,
   }));
 }
 
@@ -565,22 +459,8 @@ export function getAvailableBusinessIds(): { placeId: string; slug: string; name
  * Lookup preview ID by domain
  */
 export async function fetchIdByDomain(domain: string): Promise<string | null> {
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "";
-
-  if (import.meta.env.DEV) {
-    return null;
-  }
-
-  try {
-    const response = await fetch(`${apiBaseUrl}/api/domain-lookup?domain=${domain}`);
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = await response.json();
-    return data.id;
-  } catch {
-    return null;
-  }
+  // This would need a backend endpoint to map custom domains to business IDs
+  // For now, return null to indicate domain lookup is not supported
+  console.log('Domain lookup not yet implemented:', domain);
+  return null;
 }
