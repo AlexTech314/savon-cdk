@@ -448,6 +448,73 @@ export const generateCopyBulk = async (place_ids: string[]): Promise<number> => 
   return generated;
 };
 
+interface FilterRule {
+  field: string;
+  operator: 'EXISTS' | 'NOT_EXISTS' | 'EQUALS' | 'NOT_EQUALS';
+  value?: string;
+}
+
+export const generateCopyBulkWithRules = async (
+  mode: 'all' | 'filtered',
+  rules: FilterRule[]
+): Promise<{ count: number }> => {
+  // First, fetch all businesses (we'll paginate through them all)
+  const allBusinesses: Business[] = [];
+  let page = 1;
+  const limit = 100;
+  
+  while (true) {
+    const result = await getBusinesses({ page, limit });
+    allBusinesses.push(...result.data);
+    if (page >= result.totalPages) break;
+    page++;
+  }
+
+  // Filter businesses based on mode and rules
+  let filtered = allBusinesses;
+  
+  if (mode === 'filtered' && rules.length > 0) {
+    filtered = allBusinesses.filter(business => {
+      return rules.every(rule => {
+        const value = (business as Record<string, unknown>)[rule.field];
+        
+        switch (rule.operator) {
+          case 'EXISTS':
+            return value !== undefined && value !== null && value !== '';
+          case 'NOT_EXISTS':
+            return value === undefined || value === null || value === '';
+          case 'EQUALS':
+            return String(value).toLowerCase() === String(rule.value).toLowerCase();
+          case 'NOT_EQUALS':
+            return String(value).toLowerCase() !== String(rule.value).toLowerCase();
+          default:
+            return true;
+        }
+      });
+    });
+  }
+
+  // Only generate for businesses without existing copy
+  const toGenerate = filtered.filter(b => !b.generated_copy);
+  
+  // Generate previews (this runs in background, we just kick it off)
+  // For now, we'll generate them sequentially in the background
+  const generatePromise = (async () => {
+    for (const business of toGenerate) {
+      try {
+        await generateCopy(business.place_id);
+      } catch (e) {
+        console.error(`Failed to generate preview for ${business.place_id}:`, e);
+      }
+    }
+  })();
+
+  // Don't await - let it run in background
+  generatePromise.catch(console.error);
+
+  return { count: toGenerate.length };
+};
+
 // ============================================
 // CAMPAIGN API
 // ============================================

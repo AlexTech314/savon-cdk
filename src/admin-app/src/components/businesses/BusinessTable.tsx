@@ -25,6 +25,7 @@ import {
   X,
   Loader2,
   Sparkles,
+  ExternalLink,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -248,10 +249,15 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                       </span>
                     </div>
                   ) : business.generated_copy ? (
-                    <Badge variant="secondary" className="gap-1">
-                      <Check className="h-3 w-3" />
-                      Generated
-                    </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1 h-7 text-xs"
+                      onClick={() => window.open(`https://alpha.savondesigns.com/preview/${business.place_id}`, '_blank')}
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      View
+                    </Button>
                   ) : (
                     <Button
                       variant="outline"

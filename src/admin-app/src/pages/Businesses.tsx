@@ -1,10 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { getBusinesses, deleteBusinesses, generateCopyBulk, exportBusinesses } from '@/lib/api';
+import { getBusinesses, deleteBusinesses, generateCopyBulkWithRules, exportBusinesses } from '@/lib/api';
 import { Business, BusinessFilters } from '@/lib/types';
 import { BusinessFiltersComponent } from '@/components/businesses/BusinessFilters';
 import { BusinessTable } from '@/components/businesses/BusinessTable';
+import { GeneratePreviewsModal, FilterRule } from '@/components/businesses/GeneratePreviewsModal';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -23,7 +24,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { ChevronDown, Download, FileText, Trash2 } from 'lucide-react';
+import { ChevronDown, Download, Trash2, Sparkles } from 'lucide-react';
 
 const Businesses: React.FC = () => {
   const navigate = useNavigate();
@@ -37,6 +38,7 @@ const Businesses: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [generateModalOpen, setGenerateModalOpen] = useState(false);
 
   const limit = 20;
 
@@ -66,20 +68,20 @@ const Businesses: React.FC = () => {
   });
 
   const generateCopyMutation = useMutation({
-    mutationFn: generateCopyBulk,
-    onSuccess: (count) => {
+    mutationFn: (params: { mode: 'all' | 'filtered'; rules: FilterRule[] }) =>
+      generateCopyBulkWithRules(params.mode, params.rules),
+    onSuccess: (result) => {
       toast({
-        title: 'Preview Generated',
-        description: `Generated preview for ${count} business(es).`,
+        title: 'Preview Generation Started',
+        description: `Generating previews for ${result.count} business(es). This may take a while.`,
       });
-      setSelectedIds([]);
       queryClient.invalidateQueries({ queryKey: ['businesses'] });
       queryClient.invalidateQueries({ queryKey: ['stats'] });
     },
     onError: () => {
       toast({
         title: 'Error',
-        description: 'Failed to generate preview.',
+        description: 'Failed to start preview generation.',
         variant: 'destructive',
       });
     },
@@ -134,8 +136,8 @@ const Businesses: React.FC = () => {
     setDeleteDialogOpen(false);
   };
 
-  const handleBulkGenerateCopy = () => {
-    generateCopyMutation.mutate(selectedIds);
+  const handleGeneratePreviews = (mode: 'all' | 'filtered', rules: FilterRule[]) => {
+    generateCopyMutation.mutate({ mode, rules });
   };
 
   return (
@@ -150,6 +152,14 @@ const Businesses: React.FC = () => {
         </div>
 
         <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            className="gap-2"
+            onClick={() => setGenerateModalOpen(true)}
+          >
+            <Sparkles className="h-4 w-4" />
+            Generate Previews
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" className="gap-2">
@@ -192,10 +202,6 @@ const Businesses: React.FC = () => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuItem onClick={handleBulkGenerateCopy}>
-                <FileText className="mr-2 h-4 w-4" />
-                Generate Preview for Selected
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => handleExport(false)}>
                 <Download className="mr-2 h-4 w-4" />
                 Export Selected
@@ -255,6 +261,14 @@ const Businesses: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Generate Previews Modal */}
+      <GeneratePreviewsModal
+        open={generateModalOpen}
+        onClose={() => setGenerateModalOpen(false)}
+        onGenerate={handleGeneratePreviews}
+        totalBusinesses={data?.total ?? 0}
+      />
     </div>
   );
 };

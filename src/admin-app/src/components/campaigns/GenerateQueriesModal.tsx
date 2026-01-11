@@ -110,8 +110,8 @@ export const GenerateQueriesModal: React.FC<GenerateQueriesModalProps> = ({
   const canGenerate = selectedStates.length > 0 && selectedType && preview.queries.length > 0;
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()} modal={false}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
