@@ -356,7 +356,7 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                       variant="outline"
                       size="sm"
                       className="gap-1 h-7 text-xs"
-                      onClick={() => window.open(`https://preview-alpha.savondesigns.com/${business.friendly_slug || business.place_id}`, '_blank')}
+                      onClick={() => window.open(`https://alpha.savondesigns.com/preview/${business.place_id}`, '_blank')}
                     >
                       <ExternalLink className="h-3 w-3" />
                       View

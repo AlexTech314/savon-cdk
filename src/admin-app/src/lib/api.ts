@@ -131,6 +131,7 @@ export const getBusinesses = async (params: {
   const { page = 1, limit = 20, search } = params;
   
   const queryParams = new URLSearchParams();
+  queryParams.set('page', String(page));
   queryParams.set('limit', String(limit));
   if (search) {
     queryParams.set('q', search);
@@ -138,8 +139,9 @@ export const getBusinesses = async (params: {
   
   const response = await apiClient<{
     items: BackendBusiness[];
-    lastKey: string | null;
     count: number;
+    page: number;
+    limit: number;
   }>(`/businesses?${queryParams.toString()}`);
   
   const data = response.items.map(transformBusiness);
@@ -195,9 +197,9 @@ export const getBusinesses = async (params: {
   return { 
     data: filtered, 
     total: response.count, 
-    page, 
-    limit, 
-    totalPages: Math.ceil(response.count / limit) 
+    page: response.page, 
+    limit: response.limit, 
+    totalPages: Math.ceil(response.count / response.limit) 
   };
 };
 
@@ -368,6 +370,45 @@ export const startJob = async (campaignId: string): Promise<Job> => {
     {
       method: 'POST',
       body: JSON.stringify({ campaignId }),
+      requiresAuth: true,
+    }
+  );
+  
+  return transformJob(response.job);
+};
+
+// ============================================
+// PIPELINE JOBS API
+// ============================================
+
+export interface PipelineFilterRule {
+  field: string;
+  operator: 'EXISTS' | 'NOT_EXISTS' | 'EQUALS' | 'NOT_EQUALS';
+  value?: string;
+}
+
+export interface StartPipelineJobOptions {
+  runDetails: boolean;
+  runEnrich: boolean;
+  runPhotos: boolean;
+  runCopy: boolean;
+  skipWithWebsite?: boolean;
+  filterRules?: PipelineFilterRule[];
+}
+
+/**
+ * Start a pipeline job that processes existing businesses
+ * (as opposed to a campaign job which searches for new ones)
+ */
+export const startPipelineJob = async (options: StartPipelineJobOptions): Promise<Job> => {
+  const response = await apiClient<{ job: BackendJob; message: string }>(
+    '/jobs',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        jobType: 'pipeline',
+        ...options,
+      }),
       requiresAuth: true,
     }
   );

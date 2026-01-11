@@ -102,34 +102,68 @@ async function listBusinesses(
   queryParams?: Record<string, string | undefined>
 ): Promise<APIGatewayProxyResultV2> {
   const limit = parseInt(queryParams?.limit || '50', 10);
-  const lastKey = queryParams?.lastKey ? JSON.parse(decodeURIComponent(queryParams.lastKey)) : undefined;
+  const page = parseInt(queryParams?.page || '1', 10);
   const searchTerm = queryParams?.q?.toLowerCase();
   
-  const command = new ScanCommand({
-    TableName: TABLE_NAME,
-    Limit: searchTerm ? undefined : limit, // Don't limit if searching (need to filter)
-    ExclusiveStartKey: lastKey,
-  });
+  // Get total count first (for pagination)
+  let totalCount = 0;
+  let countLastKey: Record<string, unknown> | undefined;
+  do {
+    const countCommand = new ScanCommand({
+      TableName: TABLE_NAME,
+      Select: 'COUNT',
+      ExclusiveStartKey: countLastKey,
+    });
+    const countResult = await docClient.send(countCommand);
+    totalCount += countResult.Count || 0;
+    countLastKey = countResult.LastEvaluatedKey;
+  } while (countLastKey);
+
+  // Calculate offset for page-based pagination
+  const offset = (page - 1) * limit;
   
-  const result = await docClient.send(command);
-  let items = result.Items || [];
+  // Scan all items up to offset + limit (for small datasets)
+  // For large datasets, consider using a GSI with sort key for efficient pagination
+  const allItems: Record<string, unknown>[] = [];
+  let scanLastKey: Record<string, unknown> | undefined;
   
-  // Simple search filter (for small datasets; use OpenSearch for production)
+  do {
+    const command = new ScanCommand({
+      TableName: TABLE_NAME,
+      ExclusiveStartKey: scanLastKey,
+    });
+    
+    const result = await docClient.send(command);
+    allItems.push(...(result.Items || []));
+    scanLastKey = result.LastEvaluatedKey;
+    
+    // Stop early if we have enough items
+    if (!searchTerm && allItems.length >= offset + limit) {
+      break;
+    }
+  } while (scanLastKey);
+  
+  let items = allItems;
+  
+  // Apply search filter if provided
   if (searchTerm) {
     items = items.filter(item => {
       const searchableFields = ['business_name', 'city', 'state', 'business_type', 'address'];
       return searchableFields.some(field => 
         String(item[field] || '').toLowerCase().includes(searchTerm)
       );
-    }).slice(0, limit);
+    });
+    totalCount = items.length; // Update count to reflect filtered results
   }
   
+  // Apply pagination
+  const paginatedItems = items.slice(offset, offset + limit);
+  
   return response(200, {
-    items,
-    lastKey: result.LastEvaluatedKey 
-      ? encodeURIComponent(JSON.stringify(result.LastEvaluatedKey))
-      : null,
-    count: items.length,
+    items: paginatedItems,
+    count: totalCount,
+    page,
+    limit,
   });
 }
 

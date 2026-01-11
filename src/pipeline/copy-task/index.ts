@@ -267,26 +267,36 @@ async function generateCopy(business: Business): Promise<Record<string, string>>
 async function getBusinessesMissingCopy(
   placeIds?: string[], 
   skipWithWebsite = true,
-  requireReviews = false
+  requireReviews = false,
+  filterRules: FilterRule[] = []
 ): Promise<{ businesses: Business[]; skippedNoReviews: number; skippedHasWebsite: number }> {
   const businesses: Business[] = [];
   let lastKey: Record<string, unknown> | undefined;
   let skippedNoReviews = 0;
   let skippedHasWebsite = 0;
 
-  do {
-    // Build filter expression for batch mode
-    let filterExpression = '(attribute_not_exists(copy_generated) OR copy_generated = :false)';
-    const expressionValues: Record<string, unknown> = { ':false': false, ':true': true };
-    
-    if (skipWithWebsite) {
-      filterExpression += ' AND (attribute_not_exists(has_website) OR has_website = :false)';
-    }
+  // Build base filter expression
+  let baseExpression = '(attribute_not_exists(copy_generated) OR copy_generated = :false)';
+  const baseValues: Record<string, unknown> = { ':false': false, ':true': true };
+  
+  if (skipWithWebsite) {
+    baseExpression += ' AND (attribute_not_exists(has_website) OR has_website = :false)';
+  }
 
+  // Build filter with rules
+  const { expression, names, values } = buildFilterFromRules(
+    filterRules,
+    placeIds ? '' : baseExpression,
+    {},
+    placeIds ? {} : baseValues
+  );
+
+  do {
     const command = new ScanCommand({
       TableName: BUSINESSES_TABLE_NAME,
-      FilterExpression: placeIds ? undefined : filterExpression,
-      ExpressionAttributeValues: placeIds ? undefined : expressionValues,
+      FilterExpression: expression || undefined,
+      ExpressionAttributeNames: Object.keys(names).length > 0 ? names : undefined,
+      ExpressionAttributeValues: Object.keys(values).length > 0 ? values : undefined,
       ExclusiveStartKey: lastKey,
     });
 
@@ -294,11 +304,11 @@ async function getBusinessesMissingCopy(
     const items = (result.Items || []) as Business[];
     
     if (placeIds) {
-      // Filter by placeIds first
+      // Filter by placeIds first, then apply base conditions
       const filtered = items.filter(b => placeIds.includes(b.place_id));
       
-      // Then apply website filter if enabled
       for (const b of filtered) {
+        if (b.copy_generated) continue;
         if (skipWithWebsite && b.has_website) {
           skippedHasWebsite++;
           continue;
@@ -361,6 +371,12 @@ async function updateBusinessWithCopy(placeId: string, copyFields: Record<string
   }));
 }
 
+interface FilterRule {
+  field: string;
+  operator: 'EXISTS' | 'NOT_EXISTS' | 'EQUALS' | 'NOT_EQUALS';
+  value?: string;
+}
+
 interface JobInput {
   // Task flags
   runSearch?: boolean;
@@ -368,15 +384,64 @@ interface JobInput {
   runEnrich?: boolean;
   runPhotos?: boolean;
   runCopy?: boolean;
-  
+
   // Input data
   placeIds?: string[];
-  
+
   // Options
   concurrency?: number;
   skipIfDone?: boolean;
   skipWithWebsite?: boolean; // Skip businesses that have a website (default: true)
   requireReviews?: boolean;  // Only process businesses with reviews_fetched=true (default: false, will warn)
+  
+  // Filter rules
+  filterRules?: FilterRule[];
+}
+
+// ============ Filter Rule Helpers ============
+
+function buildFilterFromRules(
+  rules: FilterRule[],
+  baseExpression: string,
+  existingNames: Record<string, string> = {},
+  existingValues: Record<string, unknown> = {}
+): {
+  expression: string;
+  names: Record<string, string>;
+  values: Record<string, unknown>;
+} {
+  const names = { ...existingNames };
+  const values = { ...existingValues };
+  const conditions: string[] = baseExpression ? [baseExpression] : [];
+  
+  rules.forEach((rule, index) => {
+    const fieldAlias = `#filterField${index}`;
+    const valueAlias = `:filterVal${index}`;
+    names[fieldAlias] = rule.field;
+    
+    switch (rule.operator) {
+      case 'EXISTS':
+        conditions.push(`attribute_exists(${fieldAlias})`);
+        break;
+      case 'NOT_EXISTS':
+        conditions.push(`attribute_not_exists(${fieldAlias})`);
+        break;
+      case 'EQUALS':
+        values[valueAlias] = rule.value;
+        conditions.push(`${fieldAlias} = ${valueAlias}`);
+        break;
+      case 'NOT_EQUALS':
+        values[valueAlias] = rule.value;
+        conditions.push(`${fieldAlias} <> ${valueAlias}`);
+        break;
+    }
+  });
+  
+  return {
+    expression: conditions.join(' AND '),
+    names,
+    values,
+  };
 }
 
 async function main(): Promise<void> {
@@ -400,18 +465,21 @@ async function main(): Promise<void> {
   const skipIfDone = jobInput.skipIfDone !== false; // Default true
   const skipWithWebsite = jobInput.skipWithWebsite !== false; // Default true
   const requireReviews = jobInput.requireReviews || false; // Default false
+  const filterRules = jobInput.filterRules || [];
 
   console.log(`Concurrency: ${concurrency}`);
   console.log(`Specific place IDs: ${placeIds ? placeIds.length : 'all missing copy'}`);
   console.log(`Skip if already done: ${skipIfDone}`);
   console.log(`Skip with website: ${skipWithWebsite}`);
   console.log(`Require reviews: ${requireReviews}`);
+  console.log(`Filter rules: ${filterRules.length > 0 ? JSON.stringify(filterRules) : 'none'}`);
 
   // Get businesses that need copy
   const { businesses, skippedNoReviews, skippedHasWebsite } = await getBusinessesMissingCopy(
     placeIds, 
     skipWithWebsite,
-    requireReviews
+    requireReviews,
+    filterRules
   );
   
   // If skipIfDone is true and we have specific placeIds, filter out already-done ones

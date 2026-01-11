@@ -36,19 +36,29 @@ interface Campaign {
   only_without_website: boolean;
 }
 
+interface FilterRule {
+  field: string;  // e.g., 'state', 'city', 'business_type'
+  operator: 'EXISTS' | 'NOT_EXISTS' | 'EQUALS' | 'NOT_EQUALS';
+  value?: string;
+}
+
 interface JobInput {
-  campaignId: string;
-  // Populated from campaign
-  jobType: 'places';
-  searches: SearchQuery[];
-  maxResultsPerSearch: number;
-  onlyWithoutWebsite: boolean;
+  // Campaign fields (optional for pipeline jobs)
+  campaignId?: string;
+  jobType: 'places' | 'pipeline';
+  searches?: SearchQuery[];
+  maxResultsPerSearch?: number;
+  onlyWithoutWebsite?: boolean;
   // Pipeline flags - which steps to run
   runSearch: boolean;
   runDetails: boolean;
   runEnrich: boolean;
   runPhotos: boolean;
   runCopy: boolean;
+  // Pipeline options
+  skipWithWebsite?: boolean;
+  // Filter rules - only process businesses matching ALL rules
+  filterRules?: FilterRule[];
 }
 
 interface Job {
@@ -56,7 +66,8 @@ interface Job {
   created_at: string;
   status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED';
   job_type: string;
-  campaign_id: string;
+  job_name?: string;  // Human-readable name for the job
+  campaign_id?: string;  // Optional - only for campaign jobs
   campaign_name?: string;
   execution_arn?: string;
   input?: JobInput;
@@ -159,25 +170,123 @@ async function listJobs(
   });
 }
 
+interface PipelineJobRequest {
+  jobType: 'pipeline';
+  runDetails: boolean;
+  runEnrich: boolean;
+  runPhotos: boolean;
+  runCopy: boolean;
+  skipWithWebsite?: boolean;
+  filterRules?: FilterRule[];
+}
+
+interface CampaignJobRequest {
+  campaignId: string;
+}
+
+type StartJobRequest = PipelineJobRequest | CampaignJobRequest;
+
+function isPipelineJobRequest(req: StartJobRequest): req is PipelineJobRequest {
+  return 'jobType' in req && req.jobType === 'pipeline';
+}
+
 async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
   if (!body) {
     return response(400, { error: 'Request body required' });
   }
   
-  const requestBody = JSON.parse(body) as { campaignId: string };
+  const requestBody = JSON.parse(body) as StartJobRequest;
   
-  // Validate campaign_id is provided
-  if (!requestBody.campaignId) {
+  // Handle pipeline jobs (run on existing businesses)
+  if (isPipelineJobRequest(requestBody)) {
+    return startPipelineJob(requestBody);
+  }
+  
+  // Handle campaign jobs (search for new businesses)
+  return startCampaignJob(requestBody);
+}
+
+async function startPipelineJob(request: PipelineJobRequest): Promise<APIGatewayProxyResultV2> {
+  const { runDetails, runEnrich, runPhotos, runCopy, skipWithWebsite = true, filterRules = [] } = request;
+  
+  // At least one step must be selected
+  if (!runDetails && !runEnrich && !runPhotos && !runCopy) {
     return response(400, { 
-      error: 'campaignId is required', 
-      details: 'Jobs must be started from a campaign' 
+      error: 'At least one pipeline step must be selected',
+      details: 'Select runDetails, runEnrich, runPhotos, or runCopy'
+    });
+  }
+  
+  // Build job input
+  const jobInput: JobInput = {
+    jobType: 'pipeline',
+    runSearch: false,  // Pipeline jobs don't search
+    runDetails,
+    runEnrich,
+    runPhotos,
+    runCopy,
+    skipWithWebsite,
+    filterRules: filterRules.length > 0 ? filterRules : undefined,
+  };
+  
+  // Generate job ID and name
+  const jobId = randomUUID();
+  const createdAt = new Date().toISOString();
+  
+  // Build human-readable job name
+  const steps: string[] = [];
+  if (runDetails) steps.push('Details');
+  if (runEnrich) steps.push('Reviews');
+  if (runPhotos) steps.push('Photos');
+  if (runCopy) steps.push('Copy');
+  const jobName = `Pipeline: ${steps.join(' → ')}`;
+  
+  // Start Step Functions execution
+  const executionName = `job-${jobId}`;
+  
+  const startResult = await sfnClient.send(new StartExecutionCommand({
+    stateMachineArn: STATE_MACHINE_ARN,
+    name: executionName,
+    input: JSON.stringify(jobInput),
+  }));
+  
+  // Create job record
+  const job: Job = {
+    job_id: jobId,
+    created_at: createdAt,
+    status: 'RUNNING',
+    job_type: 'pipeline',
+    job_name: jobName,
+    execution_arn: startResult.executionArn,
+    input: jobInput,
+    started_at: startResult.startDate?.toISOString(),
+    expires_at: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days TTL
+  };
+  
+  await docClient.send(new PutCommand({
+    TableName: JOBS_TABLE_NAME,
+    Item: job,
+  }));
+  
+  return response(201, {
+    job,
+    message: 'Pipeline job started successfully',
+  });
+}
+
+async function startCampaignJob(request: CampaignJobRequest): Promise<APIGatewayProxyResultV2> {
+  const { campaignId } = request;
+  
+  if (!campaignId) {
+    return response(400, { 
+      error: 'campaignId is required for campaign jobs',
     });
   }
   
   // Fetch campaign from DynamoDB
   const campaignResult = await docClient.send(new GetCommand({
     TableName: CAMPAIGNS_TABLE_NAME,
-    Key: { campaign_id: requestBody.campaignId },
+    Key: { campaign_id: campaignId },
   }));
   
   if (!campaignResult.Item) {
@@ -190,7 +299,7 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
   // Campaigns only run search to find new businesses
   const jobInput: JobInput = {
     campaignId: campaign.campaign_id,
-    jobType: 'places', // All campaign jobs are places (lead finding)
+    jobType: 'places',
     searches: campaign.searches,
     maxResultsPerSearch: campaign.max_results_per_search,
     onlyWithoutWebsite: campaign.only_without_website,
@@ -221,6 +330,7 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
     created_at: createdAt,
     status: 'RUNNING',
     job_type: 'places',
+    job_name: `Campaign: ${campaign.name}`,
     campaign_id: campaign.campaign_id,
     campaign_name: campaign.name,
     execution_arn: startResult.executionArn,
@@ -246,7 +356,7 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
   
   return response(201, {
     job,
-    message: 'Job started successfully',
+    message: 'Campaign job started successfully',
   });
 }
 

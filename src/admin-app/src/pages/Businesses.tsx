@@ -1,11 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { getBusinesses, deleteBusinesses, generateCopyBulkWithRules, exportBusinesses } from '@/lib/api';
+import { getBusinesses, deleteBusinesses, exportBusinesses } from '@/lib/api';
 import { Business, BusinessFilters } from '@/lib/types';
 import { BusinessFiltersComponent } from '@/components/businesses/BusinessFilters';
 import { BusinessTable } from '@/components/businesses/BusinessTable';
-import { GeneratePreviewsModal, FilterRule } from '@/components/businesses/GeneratePreviewsModal';
+import { RunPipelineWizard } from '@/components/businesses/RunPipelineWizard';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -24,7 +24,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { ChevronDown, Download, Trash2, Sparkles } from 'lucide-react';
+import { ChevronDown, Download, Trash2, Play } from 'lucide-react';
 
 const Businesses: React.FC = () => {
   const navigate = useNavigate();
@@ -62,26 +62,6 @@ const Businesses: React.FC = () => {
       toast({
         title: 'Error',
         description: 'Failed to delete businesses.',
-        variant: 'destructive',
-      });
-    },
-  });
-
-  const generateCopyMutation = useMutation({
-    mutationFn: (params: { mode: 'all' | 'filtered'; rules: FilterRule[] }) =>
-      generateCopyBulkWithRules(params.mode, params.rules),
-    onSuccess: (result) => {
-      toast({
-        title: 'Preview Generation Started',
-        description: `Generating previews for ${result.count} business(es). This may take a while.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ['businesses'] });
-      queryClient.invalidateQueries({ queryKey: ['stats'] });
-    },
-    onError: () => {
-      toast({
-        title: 'Error',
-        description: 'Failed to start preview generation.',
         variant: 'destructive',
       });
     },
@@ -136,10 +116,6 @@ const Businesses: React.FC = () => {
     setDeleteDialogOpen(false);
   };
 
-  const handleGeneratePreviews = (mode: 'all' | 'filtered', rules: FilterRule[]) => {
-    generateCopyMutation.mutate({ mode, rules });
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Page header */}
@@ -157,8 +133,8 @@ const Businesses: React.FC = () => {
             className="gap-2"
             onClick={() => setGenerateModalOpen(true)}
           >
-            <Sparkles className="h-4 w-4" />
-            Generate Previews
+            <Play className="h-4 w-4" />
+            Run Pipeline
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -262,11 +238,10 @@ const Businesses: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Generate Previews Modal */}
-      <GeneratePreviewsModal
+      {/* Run Pipeline Wizard */}
+      <RunPipelineWizard
         open={generateModalOpen}
         onClose={() => setGenerateModalOpen(false)}
-        onGenerate={handleGeneratePreviews}
         totalBusinesses={data?.total ?? 0}
       />
     </div>

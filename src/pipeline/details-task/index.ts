@@ -41,6 +41,12 @@ const rateLimiter = {
 
 // ============ Types ============
 
+interface FilterRule {
+  field: string;  // e.g., 'state', 'city', 'business_type'
+  operator: 'EXISTS' | 'NOT_EXISTS' | 'EQUALS' | 'NOT_EQUALS';
+  value?: string;
+}
+
 interface JobInput {
   // Task flags
   runSearch?: boolean;
@@ -55,6 +61,59 @@ interface JobInput {
   // Options
   concurrency?: number;
   skipIfDone?: boolean;
+  skipWithWebsite?: boolean;
+  
+  // Filter rules - only process businesses matching ALL rules
+  filterRules?: FilterRule[];
+}
+
+// ============ Filter Rule Helpers ============
+
+/**
+ * Build DynamoDB filter expression from filter rules
+ */
+function buildFilterFromRules(
+  rules: FilterRule[],
+  baseExpression: string,
+  existingNames: Record<string, string> = {},
+  existingValues: Record<string, unknown> = {}
+): {
+  expression: string;
+  names: Record<string, string>;
+  values: Record<string, unknown>;
+} {
+  const names = { ...existingNames };
+  const values = { ...existingValues };
+  const conditions: string[] = baseExpression ? [baseExpression] : [];
+  
+  rules.forEach((rule, index) => {
+    const fieldAlias = `#filterField${index}`;
+    const valueAlias = `:filterVal${index}`;
+    names[fieldAlias] = rule.field;
+    
+    switch (rule.operator) {
+      case 'EXISTS':
+        conditions.push(`attribute_exists(${fieldAlias})`);
+        break;
+      case 'NOT_EXISTS':
+        conditions.push(`attribute_not_exists(${fieldAlias})`);
+        break;
+      case 'EQUALS':
+        values[valueAlias] = rule.value;
+        conditions.push(`${fieldAlias} = ${valueAlias}`);
+        break;
+      case 'NOT_EQUALS':
+        values[valueAlias] = rule.value;
+        conditions.push(`${fieldAlias} <> ${valueAlias}`);
+        break;
+    }
+  });
+  
+  return {
+    expression: conditions.join(' AND '),
+    names,
+    values,
+  };
 }
 
 interface Business {
@@ -144,17 +203,28 @@ function extractAddressComponent(components: PlaceDetails['addressComponents'], 
 /**
  * Get businesses that need details fetched
  */
-async function getBusinessesNeedingDetails(placeIds?: string[]): Promise<Business[]> {
+async function getBusinessesNeedingDetails(placeIds?: string[], filterRules: FilterRule[] = []): Promise<Business[]> {
   const businesses: Business[] = [];
   let lastKey: Record<string, unknown> | undefined;
+
+  // Base filter: needs details and has been searched
+  const baseExpression = '(attribute_not_exists(details_fetched) OR details_fetched = :false) AND searched = :true';
+  const baseValues: Record<string, unknown> = { ':false': false, ':true': true };
+
+  // Build filter with rules
+  const { expression, names, values } = buildFilterFromRules(
+    filterRules,
+    placeIds ? '' : baseExpression,  // Skip base if we have specific IDs
+    {},
+    placeIds ? {} : baseValues
+  );
 
   do {
     const command = new ScanCommand({
       TableName: BUSINESSES_TABLE_NAME,
-      FilterExpression: placeIds 
-        ? undefined  // If specific IDs provided, we'll filter after
-        : '(attribute_not_exists(details_fetched) OR details_fetched = :false) AND searched = :true',
-      ExpressionAttributeValues: placeIds ? undefined : { ':false': false, ':true': true },
+      FilterExpression: expression || undefined,
+      ExpressionAttributeNames: Object.keys(names).length > 0 ? names : undefined,
+      ExpressionAttributeValues: Object.keys(values).length > 0 ? values : undefined,
       ExclusiveStartKey: lastKey,
     });
 
@@ -162,7 +232,12 @@ async function getBusinessesNeedingDetails(placeIds?: string[]): Promise<Busines
     const items = (result.Items || []) as Business[];
     
     if (placeIds) {
-      businesses.push(...items.filter(b => placeIds.includes(b.place_id)));
+      // If specific IDs, filter to those and apply base condition
+      businesses.push(...items.filter(b => 
+        placeIds.includes(b.place_id) && 
+        (!b.details_fetched) && 
+        b.searched
+      ));
     } else {
       businesses.push(...items);
     }
@@ -254,13 +329,15 @@ async function main(): Promise<void> {
   const placeIds = jobInput.placeIds;
   const concurrency = jobInput.concurrency || 5;
   const skipIfDone = jobInput.skipIfDone !== false; // Default true
+  const filterRules = jobInput.filterRules || [];
 
   console.log(`Concurrency: ${concurrency}`);
   console.log(`Specific place IDs: ${placeIds ? placeIds.length : 'all needing details'}`);
   console.log(`Skip if already done: ${skipIfDone}`);
+  console.log(`Filter rules: ${filterRules.length > 0 ? JSON.stringify(filterRules) : 'none'}`);
 
   // Get businesses that need details
-  let businesses = await getBusinessesNeedingDetails(placeIds);
+  let businesses = await getBusinessesNeedingDetails(placeIds, filterRules);
   
   // If skipIfDone is true and we have specific placeIds, filter out already-done ones
   if (skipIfDone && placeIds) {

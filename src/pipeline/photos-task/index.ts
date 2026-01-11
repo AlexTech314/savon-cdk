@@ -41,6 +41,12 @@ const rateLimiter = {
 
 // ============ Types ============
 
+interface FilterRule {
+  field: string;
+  operator: 'EXISTS' | 'NOT_EXISTS' | 'EQUALS' | 'NOT_EQUALS';
+  value?: string;
+}
+
 interface JobInput {
   // Task flags
   runSearch?: boolean;
@@ -55,7 +61,57 @@ interface JobInput {
   // Options
   concurrency?: number;
   skipIfDone?: boolean;
+  skipWithWebsite?: boolean;
   maxPhotosPerBusiness?: number;
+  
+  // Filter rules
+  filterRules?: FilterRule[];
+}
+
+// ============ Filter Rule Helpers ============
+
+function buildFilterFromRules(
+  rules: FilterRule[],
+  baseExpression: string,
+  existingNames: Record<string, string> = {},
+  existingValues: Record<string, unknown> = {}
+): {
+  expression: string;
+  names: Record<string, string>;
+  values: Record<string, unknown>;
+} {
+  const names = { ...existingNames };
+  const values = { ...existingValues };
+  const conditions: string[] = baseExpression ? [baseExpression] : [];
+  
+  rules.forEach((rule, index) => {
+    const fieldAlias = `#filterField${index}`;
+    const valueAlias = `:filterVal${index}`;
+    names[fieldAlias] = rule.field;
+    
+    switch (rule.operator) {
+      case 'EXISTS':
+        conditions.push(`attribute_exists(${fieldAlias})`);
+        break;
+      case 'NOT_EXISTS':
+        conditions.push(`attribute_not_exists(${fieldAlias})`);
+        break;
+      case 'EQUALS':
+        values[valueAlias] = rule.value;
+        conditions.push(`${fieldAlias} = ${valueAlias}`);
+        break;
+      case 'NOT_EQUALS':
+        values[valueAlias] = rule.value;
+        conditions.push(`${fieldAlias} <> ${valueAlias}`);
+        break;
+    }
+  });
+  
+  return {
+    expression: conditions.join(' AND '),
+    names,
+    values,
+  };
 }
 
 interface Business {
@@ -112,23 +168,36 @@ function buildPhotoUrl(photoName: string, maxWidth = 800): string {
 /**
  * Get businesses that need photos fetched
  */
-async function getBusinessesNeedingPhotos(placeIds?: string[], skipWithWebsite = true): Promise<Business[]> {
+async function getBusinessesNeedingPhotos(
+  placeIds?: string[], 
+  skipWithWebsite = true,
+  filterRules: FilterRule[] = []
+): Promise<Business[]> {
   const businesses: Business[] = [];
   let lastKey: Record<string, unknown> | undefined;
 
-  do {
-    // Build filter expression
-    let filterExpression = '(attribute_not_exists(photos_fetched) OR photos_fetched = :false) AND details_fetched = :true';
-    const expressionValues: Record<string, unknown> = { ':false': false, ':true': true };
-    
-    if (skipWithWebsite) {
-      filterExpression += ' AND (attribute_not_exists(has_website) OR has_website = :false)';
-    }
+  // Build base filter expression
+  let baseExpression = '(attribute_not_exists(photos_fetched) OR photos_fetched = :false) AND details_fetched = :true';
+  const baseValues: Record<string, unknown> = { ':false': false, ':true': true };
+  
+  if (skipWithWebsite) {
+    baseExpression += ' AND (attribute_not_exists(has_website) OR has_website = :false)';
+  }
 
+  // Build filter with rules
+  const { expression, names, values } = buildFilterFromRules(
+    filterRules,
+    placeIds ? '' : baseExpression,
+    {},
+    placeIds ? {} : baseValues
+  );
+
+  do {
     const command = new ScanCommand({
       TableName: BUSINESSES_TABLE_NAME,
-      FilterExpression: placeIds ? undefined : filterExpression,
-      ExpressionAttributeValues: placeIds ? undefined : expressionValues,
+      FilterExpression: expression || undefined,
+      ExpressionAttributeNames: Object.keys(names).length > 0 ? names : undefined,
+      ExpressionAttributeValues: Object.keys(values).length > 0 ? values : undefined,
       ExclusiveStartKey: lastKey,
     });
 
@@ -136,7 +205,13 @@ async function getBusinessesNeedingPhotos(placeIds?: string[], skipWithWebsite =
     const items = (result.Items || []) as Business[];
     
     if (placeIds) {
-      businesses.push(...items.filter(b => placeIds.includes(b.place_id)));
+      // Apply base conditions manually for specific IDs
+      businesses.push(...items.filter(b => 
+        placeIds.includes(b.place_id) && 
+        (!b.photos_fetched) && 
+        b.details_fetched &&
+        (!skipWithWebsite || !b.has_website)
+      ));
     } else {
       businesses.push(...items);
     }
@@ -207,15 +282,19 @@ async function main(): Promise<void> {
   const placeIds = jobInput.placeIds;
   const concurrency = jobInput.concurrency || 5;
   const skipIfDone = jobInput.skipIfDone !== false; // Default true
+  const skipWithWebsite = jobInput.skipWithWebsite !== false; // Default true
   const maxPhotosPerBusiness = jobInput.maxPhotosPerBusiness || 5;
+  const filterRules = jobInput.filterRules || [];
 
   console.log(`Concurrency: ${concurrency}`);
   console.log(`Specific place IDs: ${placeIds ? placeIds.length : 'all needing photos'}`);
   console.log(`Skip if already done: ${skipIfDone}`);
+  console.log(`Skip with website: ${skipWithWebsite}`);
   console.log(`Max photos per business: ${maxPhotosPerBusiness}`);
+  console.log(`Filter rules: ${filterRules.length > 0 ? JSON.stringify(filterRules) : 'none'}`);
 
   // Get businesses that need photos
-  let businesses = await getBusinessesNeedingPhotos(placeIds);
+  let businesses = await getBusinessesNeedingPhotos(placeIds, skipWithWebsite, filterRules);
   
   // If skipIfDone is true and we have specific placeIds, filter out already-done ones
   if (skipIfDone && placeIds) {
