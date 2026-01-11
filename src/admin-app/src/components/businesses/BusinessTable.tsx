@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import { Business } from '@/lib/types';
-import { generateFullPipeline } from '@/lib/api';
+import { 
+  generateFullPipeline, 
+  generateDetails, 
+  generateReviews, 
+  generatePhotos, 
+  generateCopy,
+} from '@/lib/api';
 import { estimatePipelineCost } from '@/lib/pricing';
 import {
   Table,
@@ -41,35 +47,108 @@ import { cn } from '@/lib/utils';
 // Get cost estimate for single business pipeline
 const pipelineCost = estimatePipelineCost(1);
 
+// Pipeline step configuration
+type PipelineStep = 'search' | 'details' | 'reviews' | 'photos' | 'copy';
+
+const PIPELINE_STEPS: {
+  id: PipelineStep;
+  label: string;
+  doneKey: keyof Business;
+  requires: (keyof Business)[];
+  tooltip: { done: string; pending: string; blocked: string };
+}[] = [
+  { 
+    id: 'search', 
+    label: 'S', 
+    doneKey: 'searched',
+    requires: [],
+    tooltip: { done: 'Searched', pending: 'Not searched', blocked: 'Cannot run search from here' }
+  },
+  { 
+    id: 'details', 
+    label: 'D', 
+    doneKey: 'details_fetched',
+    requires: ['searched'],
+    tooltip: { done: 'Details fetched', pending: 'Click to fetch details', blocked: 'Requires: Search' }
+  },
+  { 
+    id: 'reviews', 
+    label: 'R', 
+    doneKey: 'reviews_fetched',
+    requires: ['details_fetched'],
+    tooltip: { done: 'Reviews fetched', pending: 'Click to fetch reviews', blocked: 'Requires: Details' }
+  },
+  { 
+    id: 'photos', 
+    label: 'P', 
+    doneKey: 'photos_fetched',
+    requires: ['details_fetched'],
+    tooltip: { done: 'Photos fetched', pending: 'Click to fetch photos', blocked: 'Requires: Details' }
+  },
+  { 
+    id: 'copy', 
+    label: 'C', 
+    doneKey: 'copy_generated',
+    requires: ['reviews_fetched'],
+    tooltip: { done: 'Copy generated', pending: 'Click to generate copy', blocked: 'Requires: Reviews' }
+  },
+];
+
 // Pipeline status badge component
 const PipelineStatusBadge: React.FC<{ 
   label: string; 
   done: boolean; 
   tooltip: string;
-}> = ({ label, done, tooltip }) => (
-  <TooltipProvider>
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            'inline-flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold',
-            done 
-              ? 'bg-green-500/20 text-green-600 dark:text-green-400' 
-              : 'bg-muted text-muted-foreground'
-          )}
-        >
-          {label}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>{tooltip}</p>
-      </TooltipContent>
-    </Tooltip>
-  </TooltipProvider>
-);
+  canRun: boolean;
+  isLoading: boolean;
+  onClick?: () => void;
+}> = ({ label, done, tooltip, canRun, isLoading, onClick }) => {
+  const isClickable = !done && canRun && onClick && !isLoading;
+  
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (isClickable && onClick) onClick();
+            }}
+            disabled={!isClickable}
+            className={cn(
+              'inline-flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold transition-all',
+              done 
+                ? 'bg-green-500/20 text-green-600 dark:text-green-400' 
+                : isClickable
+                  ? 'bg-primary/20 text-primary hover:bg-primary/30 cursor-pointer hover:scale-110'
+                  : 'bg-muted text-muted-foreground',
+              isLoading && 'animate-pulse'
+            )}
+          >
+            {isLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              label
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>{tooltip}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
 
-// Pipeline status display component
-const PipelineStatus: React.FC<{ business: Business }> = ({ business }) => {
+// Pipeline status display component with clickable badges
+const PipelineStatus: React.FC<{ 
+  business: Business;
+  onStepComplete: () => void;
+}> = ({ business, onStepComplete }) => {
+  const { toast } = useToast();
+  const [loadingStep, setLoadingStep] = useState<PipelineStep | null>(null);
+
   // If business has a website, show a different indicator
   if (business.has_website) {
     return (
@@ -89,33 +168,70 @@ const PipelineStatus: React.FC<{ business: Business }> = ({ business }) => {
     );
   }
 
+  const handleRunStep = async (step: PipelineStep) => {
+    setLoadingStep(step);
+    try {
+      switch (step) {
+        case 'details':
+          await generateDetails(business.place_id);
+          toast({ title: 'Details Fetched', description: `Updated ${business.business_name}` });
+          break;
+        case 'reviews':
+          await generateReviews(business.place_id);
+          toast({ title: 'Reviews Fetched', description: `Updated ${business.business_name}` });
+          break;
+        case 'photos':
+          await generatePhotos(business.place_id);
+          toast({ title: 'Photos Fetched', description: `Updated ${business.business_name}` });
+          break;
+        case 'copy':
+          await generateCopy(business.place_id);
+          toast({ title: 'Copy Generated', description: `Updated ${business.business_name}` });
+          break;
+        default:
+          toast({ title: 'Not Supported', description: 'This step cannot be run individually', variant: 'destructive' });
+          return;
+      }
+      onStepComplete();
+    } catch (error) {
+      console.error(`Failed to run ${step}:`, error);
+      toast({ 
+        title: 'Error', 
+        description: `Failed to run ${step} for ${business.business_name}`,
+        variant: 'destructive'
+      });
+    } finally {
+      setLoadingStep(null);
+    }
+  };
+
+  const checkDependencies = (requires: (keyof Business)[]) => {
+    return requires.every(dep => !!business[dep]);
+  };
+
   return (
     <div className="flex items-center gap-0.5">
-      <PipelineStatusBadge 
-        label="S" 
-        done={!!business.searched} 
-        tooltip={business.searched ? 'Searched' : 'Not searched'} 
-      />
-      <PipelineStatusBadge 
-        label="D" 
-        done={!!business.details_fetched} 
-        tooltip={business.details_fetched ? 'Details fetched' : 'Details pending'} 
-      />
-      <PipelineStatusBadge 
-        label="R" 
-        done={!!business.reviews_fetched} 
-        tooltip={business.reviews_fetched ? 'Reviews fetched' : 'Reviews pending'} 
-      />
-      <PipelineStatusBadge 
-        label="P" 
-        done={!!business.photos_fetched} 
-        tooltip={business.photos_fetched ? 'Photos fetched' : 'Photos pending'} 
-      />
-      <PipelineStatusBadge 
-        label="C" 
-        done={!!business.copy_generated} 
-        tooltip={business.copy_generated ? 'Copy generated' : 'Copy pending'} 
-      />
+      {PIPELINE_STEPS.map((step) => {
+        const isDone = !!business[step.doneKey];
+        const canRun = step.id !== 'search' && checkDependencies(step.requires);
+        const tooltip = isDone 
+          ? step.tooltip.done 
+          : canRun 
+            ? step.tooltip.pending 
+            : step.tooltip.blocked;
+
+        return (
+          <PipelineStatusBadge
+            key={step.id}
+            label={step.label}
+            done={isDone}
+            tooltip={tooltip}
+            canRun={canRun}
+            isLoading={loadingStep === step.id}
+            onClick={canRun && !isDone ? () => handleRunStep(step.id) : undefined}
+          />
+        );
+      })}
     </div>
   );
 };
@@ -325,8 +441,11 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                 </TableCell>
                 <TableCell>{business.city}</TableCell>
                 <TableCell>{business.state}</TableCell>
-                <TableCell>
-                  <PipelineStatus business={business} />
+                <TableCell onClick={(e) => e.stopPropagation()}>
+                  <PipelineStatus 
+                    business={business} 
+                    onStepComplete={() => queryClient.invalidateQueries({ queryKey: ['businesses'] })}
+                  />
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   {generatingId === business.place_id ? (

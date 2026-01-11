@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getCampaigns, deleteCampaign, runCampaign } from '@/lib/api';
 import { Campaign } from '@/types/jobs';
 import { CampaignForm } from '@/components/campaigns/CampaignForm';
+import { estimateSearchCost } from '@/lib/pricing';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -172,6 +173,7 @@ const Campaigns: React.FC = () => {
                   <TableHead>Name</TableHead>
                   <TableHead>Searches</TableHead>
                   <TableHead>Max Results</TableHead>
+                  <TableHead>Price per Run</TableHead>
                   <TableHead>Last Run</TableHead>
                   <TableHead className="w-[100px]">Actions</TableHead>
                 </TableRow>
@@ -209,6 +211,11 @@ const Campaigns: React.FC = () => {
                       <Badge variant="outline">
                         {campaign.max_results_per_search} per search
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm font-medium text-primary">
+                        {estimateSearchCost(campaign.searches.length).formatted}
+                      </span>
                     </TableCell>
                     <TableCell>
                       {campaign.last_run_at ? (
