@@ -4,10 +4,16 @@
   "description": "Boutique web development agency crafting distinctive digital experiences for brands that refuse to blend in.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f9f7f4",
-  "theme_color": "#c4694a",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
   "orientation": "portrait-primary",
   "icons": [
+    {
+      "src": "/imessage-preview.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
     {
       "src": "/favicon.svg",
       "sizes": "any",
@@ -18,7 +24,7 @@
       "src": "/apple-touch-icon.png",
       "sizes": "180x180",
       "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "any"
     },
     {
       "src": "/apple-touch-icon.png",
