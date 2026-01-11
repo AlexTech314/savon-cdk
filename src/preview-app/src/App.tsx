@@ -135,6 +135,18 @@ export default function App() {
     });
   }, [data]);
 
+  // Send scroll position to parent window (for iframe embedding)
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'scroll', scrollY: window.scrollY }, '*');
+      }
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   // Loading state - engaging animation for potentially long generation
   if (isResolvingId || isLoading) {
     return (
