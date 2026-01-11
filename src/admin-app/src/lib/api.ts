@@ -279,8 +279,18 @@ export const importBusinesses = async (csvData: string): Promise<ImportResult> =
   };
 };
 
-export const exportBusinesses = async (_filters?: BusinessFilters): Promise<string> => {
-  return apiClient<string>('/businesses/export', { requiresAuth: true });
+export interface BusinessColumnsResponse {
+  columns: string[];
+  total: number;
+}
+
+export const getBusinessColumns = async (): Promise<BusinessColumnsResponse> => {
+  return apiClient<BusinessColumnsResponse>('/businesses/columns', { requiresAuth: true });
+};
+
+export const exportBusinesses = async (columns?: string[]): Promise<string> => {
+  const params = columns?.length ? `?columns=${columns.join(',')}` : '';
+  return apiClient<string>(`/businesses/export${params}`, { requiresAuth: true });
 };
 
 // ============================================

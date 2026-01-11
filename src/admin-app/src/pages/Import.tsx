@@ -1,11 +1,12 @@
 import React, { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { importBusinesses, exportBusinesses } from '@/lib/api';
+import { importBusinesses } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { Upload, Download, FileText, Check, X, Loader2 } from 'lucide-react';
+import { Upload, Download, FileText, Check, X, Loader2, Columns } from 'lucide-react';
+import { ExportWizard } from '@/components/ExportWizard';
 
 const Import: React.FC = () => {
   const { toast } = useToast();
@@ -15,6 +16,7 @@ const Import: React.FC = () => {
   const [preview, setPreview] = useState<string[][]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
+  const [showExportWizard, setShowExportWizard] = useState(false);
 
   const importMutation = useMutation({
     mutationFn: (csvData: string) => importBusinesses(csvData),
@@ -112,29 +114,6 @@ const Import: React.FC = () => {
       importMutation.mutate(text);
     };
     reader.readAsText(file);
-  };
-
-  const handleExportAll = async () => {
-    try {
-      const csv = await exportBusinesses();
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `businesses_export_${Date.now()}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast({
-        title: 'Export Complete',
-        description: 'CSV file downloaded successfully.',
-      });
-    } catch {
-      toast({
-        title: 'Export Failed',
-        description: 'There was an error exporting the data.',
-        variant: 'destructive',
-      });
-    }
   };
 
   const downloadTemplate = () => {
@@ -291,24 +270,33 @@ const Import: React.FC = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-lg bg-muted/50 p-6 text-center">
-              <Download className="mx-auto h-12 w-12 text-muted-foreground" />
-              <p className="mt-4 text-sm text-muted-foreground">
-                Export all businesses to a CSV file
+              <Columns className="mx-auto h-12 w-12 text-muted-foreground" />
+              <p className="mt-4 text-sm font-medium">
+                Choose Your Columns
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Select specific columns to include in your export, or export all data
               </p>
             </div>
 
             <div className="space-y-2">
-              <Button onClick={handleExportAll} className="w-full gap-2">
+              <Button onClick={() => setShowExportWizard(true)} className="w-full gap-2">
                 <Download className="h-4 w-4" />
-                Export All Businesses
+                Export Businesses...
               </Button>
               <p className="text-xs text-muted-foreground text-center">
-                You can also export filtered data from the Businesses page
+                Opens a wizard to select columns for export
               </p>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Export Wizard Modal */}
+      <ExportWizard 
+        open={showExportWizard} 
+        onClose={() => setShowExportWizard(false)} 
+      />
     </div>
   );
 };

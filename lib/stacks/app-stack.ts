@@ -615,6 +615,14 @@ export class AppStack extends cdk.Stack {
       authorizer,
     });
 
+    // Get available column names for export
+    httpApi.addRoutes({
+      path: '/businesses/columns',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: configIntegration,
+      authorizer,
+    });
+
     httpApi.addRoutes({
       path: '/jobs',
       methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],

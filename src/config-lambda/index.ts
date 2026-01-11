@@ -68,7 +68,12 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     
     // GET /businesses/export - CSV export
     if (routeKey === 'GET /businesses/export') {
-      return await exportBusinesses();
+      return await exportBusinesses(queryStringParameters);
+    }
+    
+    // GET /businesses/columns - Get available column names
+    if (routeKey === 'GET /businesses/columns') {
+      return await getBusinessColumns();
     }
     
     // POST /businesses/count - Count businesses matching filter rules
@@ -305,7 +310,12 @@ async function importBusinesses(body?: string): Promise<APIGatewayProxyResultV2>
   });
 }
 
-async function exportBusinesses(): Promise<APIGatewayProxyResultV2> {
+async function exportBusinesses(
+  queryParams?: Record<string, string | undefined>
+): Promise<APIGatewayProxyResultV2> {
+  // Parse selected columns from query params (comma-separated)
+  const selectedColumns = queryParams?.columns?.split(',').filter(c => c.trim()) || [];
+  
   // Scan all items (for small datasets; paginate for larger)
   const items: Business[] = [];
   let lastKey: Record<string, unknown> | undefined;
@@ -325,8 +335,13 @@ async function exportBusinesses(): Promise<APIGatewayProxyResultV2> {
     return response(200, '', { 'Content-Type': 'text/csv' });
   }
   
-  // Get all unique columns
-  const columns = [...new Set(items.flatMap(item => Object.keys(item)))];
+  // Get all unique columns from data
+  const allColumns = [...new Set(items.flatMap(item => Object.keys(item)))];
+  
+  // Use selected columns if provided, otherwise all columns
+  const columns = selectedColumns.length > 0 
+    ? selectedColumns.filter(c => allColumns.includes(c))
+    : allColumns;
   
   const csv = stringify(items, {
     header: true,
@@ -336,6 +351,56 @@ async function exportBusinesses(): Promise<APIGatewayProxyResultV2> {
   return response(200, csv, { 
     'Content-Type': 'text/csv',
     'Content-Disposition': `attachment; filename="businesses_${Date.now()}.csv"`,
+  });
+}
+
+/**
+ * Get all available column names from business records
+ * Used for export column selection
+ */
+async function getBusinessColumns(): Promise<APIGatewayProxyResultV2> {
+  // Scan items to discover all column names
+  const columnSet = new Set<string>();
+  let lastKey: Record<string, unknown> | undefined;
+  let scannedCount = 0;
+  const MAX_SCAN = 1000; // Scan up to 1000 items to discover columns
+  
+  do {
+    const command = new ScanCommand({
+      TableName: TABLE_NAME,
+      ExclusiveStartKey: lastKey,
+      Limit: 100,
+    });
+    
+    const result = await docClient.send(command);
+    
+    for (const item of (result.Items || [])) {
+      Object.keys(item).forEach(key => columnSet.add(key));
+    }
+    
+    scannedCount += result.Items?.length || 0;
+    lastKey = result.LastEvaluatedKey;
+  } while (lastKey && scannedCount < MAX_SCAN);
+  
+  // Convert to array and sort alphabetically, with common columns first
+  const priorityColumns = [
+    'place_id', 'business_name', 'business_type', 
+    'address', 'city', 'state', 'zip_code', 'phone',
+    'website_uri', 'rating', 'rating_count',
+    'created_at', 'updated_at'
+  ];
+  
+  const allColumns = [...columnSet];
+  
+  // Sort: priority columns first (in order), then rest alphabetically
+  const sortedColumns = [
+    ...priorityColumns.filter(c => columnSet.has(c)),
+    ...allColumns.filter(c => !priorityColumns.includes(c)).sort(),
+  ];
+  
+  return response(200, {
+    columns: sortedColumns,
+    total: sortedColumns.length,
   });
 }
 
