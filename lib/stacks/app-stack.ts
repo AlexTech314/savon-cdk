@@ -276,22 +276,16 @@ export class AppStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    const configLambda = new nodejs.NodejsFunction(this, 'ConfigLambda', {
-      entry: path.join(__dirname, '../../src/config-lambda/index.ts'),
-      handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_20_X,
+    const configLambda = new lambda.DockerImageFunction(this, 'ConfigLambda', {
+      code: lambda.DockerImageCode.fromImageAsset(
+        path.join(__dirname, '../../src/config-lambda')
+      ),
       timeout: cdk.Duration.seconds(60), // Increased for LLM calls
       memorySize: 512,
       logGroup: configLogGroup,
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         CLAUDE_API_KEY: claudeSecret.secretValue.unsafeUnwrap(),
-      },
-      bundling: {
-        minify: true,
-        sourceMap: true,
-        // Include @anthropic-ai/sdk in the bundle (npm install in output)
-        nodeModules: ['@anthropic-ai/sdk'],
       },
     });
 

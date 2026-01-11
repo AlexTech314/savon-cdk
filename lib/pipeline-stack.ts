@@ -62,9 +62,6 @@ export class PipelineStack extends cdk.Stack {
           'npm ci',
           'npm run build',
           
-          // Install Lambda dependencies (for bundling)
-          'cd src/config-lambda && npm ci && cd ../..',
-          
           // Build UI apps (outputs to src/*/dist/)
           'cd src/ui && npm ci && npm run build && cd ../..',
           'cd src/preview-app && npm ci && npm run build && cd ../..',
