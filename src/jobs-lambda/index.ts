@@ -16,7 +16,11 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { randomUUID } from 'crypto';
 
 const dynamoClient = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 const sfnClient = new SFNClient({});
 
 const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME!;
@@ -28,12 +32,22 @@ interface SearchQuery {
   includedType?: string;
 }
 
+/**
+ * Data tier determines which Google Places API fields are fetched during search.
+ * 
+ * - pro: $32/1000 - Basic data (address, location, types, business status)
+ * - enterprise: $35/1000 - Pro + phone, website, rating, hours, price level
+ * - enterprise_atmosphere: $40/1000 - Enterprise + reviews, atmosphere data
+ */
+type DataTier = 'pro' | 'enterprise' | 'enterprise_atmosphere';
+
 interface Campaign {
   campaign_id: string;
   name: string;
   searches: SearchQuery[];
   max_results_per_search: number;
   only_without_website: boolean;
+  data_tier?: DataTier;
 }
 
 interface FilterRule {
@@ -49,6 +63,7 @@ interface JobInput {
   searches?: SearchQuery[];
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
+  dataTier?: DataTier;
   // Pipeline flags - which steps to run
   runSearch: boolean;
   runDetails: boolean;
@@ -300,12 +315,15 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
   
   // Build job input from campaign
   // Campaigns only run search to find new businesses
+  const dataTier = campaign.data_tier || 'enterprise';
+  
   const jobInput: JobInput = {
     campaignId: campaign.campaign_id,
     jobType: 'places',
     searches: campaign.searches,
     maxResultsPerSearch: campaign.max_results_per_search,
     onlyWithoutWebsite: campaign.only_without_website,
+    dataTier,
     // Pipeline flags - only search for campaigns
     runSearch: true,
     runDetails: false,
@@ -329,13 +347,20 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     input: JSON.stringify(jobInput),
   }));
   
+  // Create human-readable tier label
+  const tierLabels: Record<DataTier, string> = {
+    pro: 'Pro',
+    enterprise: 'Enterprise',
+    enterprise_atmosphere: 'Enterprise+Atm',
+  };
+  
   // Create job record
   const job: Job = {
     job_id: jobId,
     created_at: createdAt,
     status: 'RUNNING',
     job_type: 'places',
-    job_name: `Campaign: ${campaign.name}${skipCachedSearches ? '' : ' (fresh)'}`,
+    job_name: `Campaign: ${campaign.name} [${tierLabels[dataTier]}]${skipCachedSearches ? '' : ' (fresh)'}`,
     campaign_id: campaign.campaign_id,
     campaign_name: campaign.name,
     execution_arn: startResult.executionArn,

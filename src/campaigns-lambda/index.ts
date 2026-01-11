@@ -11,7 +11,11 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { randomUUID } from 'crypto';
 
 const dynamoClient = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 
 const CAMPAIGNS_TABLE_NAME = process.env.CAMPAIGNS_TABLE_NAME!;
 
@@ -20,6 +24,16 @@ interface SearchQuery {
   includedType?: string;
 }
 
+/**
+ * Data tier determines which Google Places API fields are fetched during search.
+ * Higher tiers cost more but get more data in a single call.
+ * 
+ * - pro: $32/1000 - Basic data (address, location, types, business status)
+ * - enterprise: $35/1000 - Pro + phone, website, rating, hours, price level
+ * - enterprise_atmosphere: $40/1000 - Enterprise + reviews, atmosphere data (delivery, dine-in, etc.)
+ */
+type DataTier = 'pro' | 'enterprise' | 'enterprise_atmosphere';
+
 interface Campaign {
   campaign_id: string;
   name: string;
@@ -27,6 +41,7 @@ interface Campaign {
   searches: SearchQuery[];
   max_results_per_search: number;
   only_without_website: boolean;
+  data_tier: DataTier;
   created_at: string;
   updated_at: string;
   last_run_at?: string;
@@ -38,6 +53,7 @@ interface CreateCampaignInput {
   searches: SearchQuery[];
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
+  dataTier?: DataTier;
 }
 
 interface UpdateCampaignInput {
@@ -46,6 +62,7 @@ interface UpdateCampaignInput {
   searches?: SearchQuery[];
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
+  dataTier?: DataTier;
 }
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -123,6 +140,16 @@ async function createCampaign(body?: string): Promise<APIGatewayProxyResultV2> {
   
   const now = new Date().toISOString();
   
+  // Validate data tier
+  const validTiers: DataTier[] = ['pro', 'enterprise', 'enterprise_atmosphere'];
+  const dataTier = input.dataTier || 'enterprise'; // Default to enterprise for balance of cost/data
+  if (!validTiers.includes(dataTier)) {
+    return response(400, { 
+      error: 'Invalid dataTier', 
+      details: `Must be one of: ${validTiers.join(', ')}` 
+    });
+  }
+
   const campaign: Campaign = {
     campaign_id: randomUUID(),
     name: input.name.trim(),
@@ -130,6 +157,7 @@ async function createCampaign(body?: string): Promise<APIGatewayProxyResultV2> {
     searches: input.searches,
     max_results_per_search: Math.min(input.maxResultsPerSearch ?? 60, 60), // Google API limit
     only_without_website: input.onlyWithoutWebsite ?? true,
+    data_tier: dataTier,
     created_at: now,
     updated_at: now,
   };
@@ -206,6 +234,19 @@ async function updateCampaign(campaignId: string, body?: string): Promise<APIGat
     updateParts.push('#only_without = :only_without');
     expressionNames['#only_without'] = 'only_without_website';
     expressionValues[':only_without'] = input.onlyWithoutWebsite;
+  }
+  
+  if (input.dataTier !== undefined) {
+    const validTiers: DataTier[] = ['pro', 'enterprise', 'enterprise_atmosphere'];
+    if (!validTiers.includes(input.dataTier)) {
+      return response(400, { 
+        error: 'Invalid dataTier', 
+        details: `Must be one of: ${validTiers.join(', ')}` 
+      });
+    }
+    updateParts.push('#data_tier = :data_tier');
+    expressionNames['#data_tier'] = 'data_tier';
+    expressionValues[':data_tier'] = input.dataTier;
   }
   
   const result = await docClient.send(new UpdateCommand({

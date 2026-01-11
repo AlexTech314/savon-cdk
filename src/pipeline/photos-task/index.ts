@@ -2,7 +2,11 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
@@ -124,21 +128,30 @@ interface Business {
 }
 
 interface PlacePhotos {
-  photos?: Array<{ name: string }>;
+  photos?: Array<{
+    name: string;
+    widthPx?: number;
+    heightPx?: number;
+    authorAttributions?: Array<{
+      displayName?: string;
+      uri?: string;
+      photoUri?: string;
+    }>;
+  }>;
 }
 
 // ============ API Functions ============
 
 /**
- * Get photo references using Place Details API ($7/1000 for photos)
+ * Get photo references with full metadata using Place Details API ($7/1000 for photos)
  */
 async function getPlacePhotos(placeId: string): Promise<PlacePhotos> {
   await rateLimiter.acquire();
   
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   
-  // Only request photos field
-  const fieldMask = 'photos';
+  // Request photos with all available metadata
+  const fieldMask = 'photos.name,photos.widthPx,photos.heightPx,photos.authorAttributions';
 
   const response = await fetch(url, {
     method: 'GET',
@@ -223,16 +236,30 @@ async function getBusinessesNeedingPhotos(
 }
 
 /**
- * Update business with photo URLs
+ * Update business with photo URLs and metadata
  */
 async function updateBusinessWithPhotos(placeId: string, photos: PlacePhotos, maxPhotos: number): Promise<number> {
-  const photoUrls = (photos.photos || [])
+  const photoData = (photos.photos || [])
     .slice(0, maxPhotos)
-    .map(photo => buildPhotoUrl(photo.name));
+    .map(photo => ({
+      url: buildPhotoUrl(photo.name),
+      name: photo.name,
+      width: photo.widthPx || null,
+      height: photo.heightPx || null,
+      attributions: photo.authorAttributions?.map(a => ({
+        displayName: a.displayName || null,
+        uri: a.uri || null,
+        photoUri: a.photoUri || null,
+      })) || [],
+    }));
+
+  // Keep simple URL array for backwards compatibility
+  const photoUrls = photoData.map(p => p.url);
 
   const updateFields: Record<string, unknown> = {
     photo_urls: JSON.stringify(photoUrls),
-    photo_count: photoUrls.length,
+    photos_data: JSON.stringify(photoData),  // Full metadata
+    photo_count: photoData.length,
     
     // Pipeline status flags
     photos_fetched: true,

@@ -3,7 +3,11 @@ import { DynamoDBDocumentClient, BatchWriteCommand, GetCommand, PutCommand } fro
 import * as crypto from 'crypto';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
@@ -46,6 +50,15 @@ const rateLimiter = {
 
 // ============ Types ============
 
+/**
+ * Data tier determines which Google Places API fields are fetched during search.
+ * 
+ * - pro: $32/1000 - Basic data (address, location, types, business status)
+ * - enterprise: $35/1000 - Pro + phone, website, rating, hours, price level
+ * - enterprise_atmosphere: $40/1000 - Enterprise + reviews, atmosphere data
+ */
+type DataTier = 'pro' | 'enterprise' | 'enterprise_atmosphere';
+
 interface SearchQuery {
   textQuery: string;
   includedType?: string;
@@ -62,6 +75,7 @@ interface JobInput {
   // Search input
   searches?: SearchQuery[];
   maxResultsPerSearch?: number;
+  dataTier?: DataTier;
   
   // Options
   concurrency?: number;
@@ -71,31 +85,197 @@ interface JobInput {
   skipCachedSearches?: boolean; // Skip searches run in the last 30 days
 }
 
-interface PlaceBasic {
+interface OpeningHours {
+  openNow?: boolean;
+  weekdayDescriptions?: string[];
+  periods?: Array<{
+    open: { day: number; hour: number; minute: number };
+    close?: { day: number; hour: number; minute: number };
+  }>;
+}
+
+interface PlaceResult {
   id: string;
   displayName?: { text: string };
   primaryType?: string;
+  primaryTypeDisplayName?: { text: string };
+  types?: string[];
+  formattedAddress?: string;
+  addressComponents?: Array<{
+    longText: string;
+    shortText: string;
+    types: string[];
+  }>;
+  location?: { latitude: number; longitude: number };
+  googleMapsUri?: string;
+  businessStatus?: string;
+  utcOffsetMinutes?: number;
+  iconMaskBaseUri?: string;
+  iconBackgroundColor?: string;
+  
+  // Enterprise tier fields
+  nationalPhoneNumber?: string;
+  internationalPhoneNumber?: string;
+  websiteUri?: string;
+  rating?: number;
+  userRatingCount?: number;
+  priceLevel?: string;
+  priceRange?: { startPrice?: { units: string }; endPrice?: { units: string } };
+  regularOpeningHours?: OpeningHours;
+  currentOpeningHours?: OpeningHours;
+  
+  // Enterprise + Atmosphere tier fields
+  reviews?: Array<{
+    text?: { text: string };
+    rating?: number;
+    authorAttribution?: { displayName?: string; uri?: string; photoUri?: string };
+    relativePublishTimeDescription?: string;
+    publishTime?: string;
+  }>;
+  editorialSummary?: { text: string };
+  
+  // Atmosphere booleans
+  allowsDogs?: boolean;
+  goodForChildren?: boolean;
+  goodForGroups?: boolean;
+  goodForWatchingSports?: boolean;
+  liveMusic?: boolean;
+  menuForChildren?: boolean;
+  outdoorSeating?: boolean;
+  reservable?: boolean;
+  restroom?: boolean;
+  servesBeer?: boolean;
+  servesBreakfast?: boolean;
+  servesBrunch?: boolean;
+  servesCocktails?: boolean;
+  servesCoffee?: boolean;
+  servesDessert?: boolean;
+  servesDinner?: boolean;
+  servesLunch?: boolean;
+  servesVegetarianFood?: boolean;
+  servesWine?: boolean;
+  curbsidePickup?: boolean;
+  delivery?: boolean;
+  dineIn?: boolean;
+  takeout?: boolean;
+  
+  // Additional options
+  parkingOptions?: Record<string, boolean>;
+  paymentOptions?: Record<string, boolean>;
+  accessibilityOptions?: Record<string, boolean>;
 }
 
 interface SearchResponse {
-  places?: PlaceBasic[];
+  places?: PlaceResult[];
   nextPageToken?: string;
+}
+
+// ============ Field Masks by Tier ============
+
+/**
+ * Get the field mask for the specified data tier
+ */
+function getFieldMaskForTier(tier: DataTier): string {
+  // Pro tier fields ($32/1000) - basic data
+  const proFields = [
+    'places.id',
+    'places.displayName',
+    'places.primaryType',
+    'places.primaryTypeDisplayName',
+    'places.types',
+    'places.formattedAddress',
+    'places.addressComponents',
+    'places.location',
+    'places.googleMapsUri',
+    'places.businessStatus',
+    'places.utcOffsetMinutes',
+    'places.iconMaskBaseUri',
+    'places.iconBackgroundColor',
+  ];
+  
+  // Enterprise tier fields ($35/1000) - Pro + contact & ratings
+  const enterpriseFields = [
+    ...proFields,
+    'places.nationalPhoneNumber',
+    'places.internationalPhoneNumber',
+    'places.websiteUri',
+    'places.rating',
+    'places.userRatingCount',
+    'places.priceLevel',
+    'places.priceRange',
+    'places.regularOpeningHours',
+    'places.currentOpeningHours',
+  ];
+  
+  // Enterprise + Atmosphere tier fields ($40/1000) - Enterprise + reviews & atmosphere
+  const atmosphereFields = [
+    ...enterpriseFields,
+    'places.reviews',
+    'places.editorialSummary',
+    // Atmosphere booleans
+    'places.allowsDogs',
+    'places.goodForChildren',
+    'places.goodForGroups',
+    'places.goodForWatchingSports',
+    'places.liveMusic',
+    'places.menuForChildren',
+    'places.outdoorSeating',
+    'places.reservable',
+    'places.restroom',
+    'places.servesBeer',
+    'places.servesBreakfast',
+    'places.servesBrunch',
+    'places.servesCocktails',
+    'places.servesCoffee',
+    'places.servesDessert',
+    'places.servesDinner',
+    'places.servesLunch',
+    'places.servesVegetarianFood',
+    'places.servesWine',
+    'places.curbsidePickup',
+    'places.delivery',
+    'places.dineIn',
+    'places.takeout',
+    'places.parkingOptions',
+    'places.paymentOptions',
+    'places.accessibilityOptions',
+  ];
+  
+  let fields: string[];
+  switch (tier) {
+    case 'pro':
+      fields = proFields;
+      break;
+    case 'enterprise':
+      fields = enterpriseFields;
+      break;
+    case 'enterprise_atmosphere':
+      fields = atmosphereFields;
+      break;
+    default:
+      fields = enterpriseFields; // Default to enterprise
+  }
+  
+  // Always include nextPageToken for pagination
+  return [...fields, 'nextPageToken'].join(',');
 }
 
 // ============ API Functions ============
 
 /**
- * Search for places using Text Search API (Pro tier: $32/1000)
- * Only requests: places.id, places.displayName, places.primaryType
+ * Search for places using Text Search API
+ * Cost depends on tier: Pro $32/1000, Enterprise $35/1000, Enterprise+Atmosphere $40/1000
  */
-async function searchPlaces(query: string, options?: { includedType?: string; maxResults?: number }): Promise<PlaceBasic[]> {
-  const allPlaces: PlaceBasic[] = [];
+async function searchPlaces(
+  query: string, 
+  options?: { includedType?: string; maxResults?: number; dataTier?: DataTier }
+): Promise<PlaceResult[]> {
+  const allPlaces: PlaceResult[] = [];
   let pageToken: string | undefined;
   const maxResults = Math.min(options?.maxResults ?? 60, 60); // Google API limit is 60 per query
+  const dataTier = options?.dataTier || 'enterprise';
   
-  // Pro tier fields only - NO websiteUri (that's Enterprise tier)
-  // MUST include nextPageToken for pagination to work!
-  const fieldMask = 'places.id,places.displayName,places.primaryType,nextPageToken';
+  const fieldMask = getFieldMaskForTier(dataTier);
   const url = 'https://places.googleapis.com/v1/places:searchText';
 
   do {
@@ -152,28 +332,201 @@ async function searchPlaces(query: string, options?: { includedType?: string; ma
 // ============ Helper Functions ============
 
 /**
- * Transform search result to minimal business record
- * Only saves: place_id, business_name, business_type, search_query, searched flag
+ * Extract address component by type
  */
-function transformToSearchRecord(place: PlaceBasic, search: SearchQuery): Record<string, unknown> {
-  return {
+function extractAddressComponent(components: PlaceResult['addressComponents'], type: string): string {
+  if (!components) return '';
+  const component = components.find(c => c.types.includes(type));
+  return component?.longText || component?.shortText || '';
+}
+
+/**
+ * Extract city from formatted address (fallback if addressComponents missing)
+ */
+function extractCityFromAddress(formattedAddress: string): string {
+  const parts = formattedAddress.split(',').map(p => p.trim());
+  return parts.length >= 3 ? parts[1] : parts[0] || '';
+}
+
+/**
+ * Format author display name (e.g., "John Smith" -> "John S.")
+ */
+function formatAuthorDisplayName(fullName: string): string {
+  if (!fullName) return 'Anonymous';
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[parts.length - 1].charAt(0).toUpperCase()}.`;
+}
+
+/**
+ * Convert price level enum to readable string
+ */
+function formatPriceLevel(priceLevel?: string): string | null {
+  if (!priceLevel) return null;
+  const mapping: Record<string, string> = {
+    'PRICE_LEVEL_FREE': 'Free',
+    'PRICE_LEVEL_INEXPENSIVE': '$',
+    'PRICE_LEVEL_MODERATE': '$$',
+    'PRICE_LEVEL_EXPENSIVE': '$$$',
+    'PRICE_LEVEL_VERY_EXPENSIVE': '$$$$',
+  };
+  return mapping[priceLevel] || priceLevel;
+}
+
+/**
+ * Transform search result to comprehensive business record
+ * Fields populated depend on the data tier used
+ */
+function transformToSearchRecord(
+  place: PlaceResult, 
+  search: SearchQuery,
+  dataTier: DataTier
+): Record<string, unknown> {
+  // Extract address components
+  const streetNumber = extractAddressComponent(place.addressComponents, 'street_number');
+  const route = extractAddressComponent(place.addressComponents, 'route');
+  const city = extractAddressComponent(place.addressComponents, 'locality') || 
+               extractAddressComponent(place.addressComponents, 'sublocality') ||
+               (place.formattedAddress ? extractCityFromAddress(place.formattedAddress) : '');
+  const state = extractAddressComponent(place.addressComponents, 'administrative_area_level_1');
+  const zipCode = extractAddressComponent(place.addressComponents, 'postal_code');
+  const country = extractAddressComponent(place.addressComponents, 'country');
+  
+  // Base record with Pro tier fields (always included)
+  const record: Record<string, unknown> = {
     place_id: place.id,
     business_name: place.displayName?.text || 'Unknown',
     business_type: search.includedType || place.primaryType || 'unknown',
     primary_type: place.primaryType || null,
+    primary_type_display_name: place.primaryTypeDisplayName?.text || null,
+    types: place.types ? JSON.stringify(place.types) : null,
     search_query: search.textQuery,
+    data_tier: dataTier,
     
-    // Pipeline status flags
+    // Address fields (Pro tier)
+    address: place.formattedAddress || '',
+    street: [streetNumber, route].filter(Boolean).join(' ') || null,
+    city: city || null,
+    state: state || null,
+    zip_code: zipCode || null,
+    country: country || null,
+    
+    // Location (Pro tier)
+    latitude: place.location?.latitude || null,
+    longitude: place.location?.longitude || null,
+    
+    // Additional Pro tier fields
+    google_maps_uri: place.googleMapsUri || null,
+    business_status: place.businessStatus || null,
+    utc_offset_minutes: place.utcOffsetMinutes ?? null,
+    icon_mask_uri: place.iconMaskBaseUri || null,
+    icon_background_color: place.iconBackgroundColor || null,
+    
+    // Generate friendly slug
+    friendly_slug: `${(place.displayName?.text || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${place.id.slice(-8)}`,
+    
+    // Pipeline status flags - set based on tier
     searched: true,
-    details_fetched: false,
-    reviews_fetched: false,
-    photos_fetched: false,
+    details_fetched: dataTier === 'enterprise' || dataTier === 'enterprise_atmosphere',
+    reviews_fetched: dataTier === 'enterprise_atmosphere',
+    photos_fetched: false, // Photos always need separate task
     copy_generated: false,
     
     // Timestamps
     created_at: new Date().toISOString(),
     searched_at: new Date().toISOString(),
   };
+  
+  // Add Enterprise tier fields if applicable
+  if (dataTier === 'enterprise' || dataTier === 'enterprise_atmosphere') {
+    const hasWebsite = !!place.websiteUri;
+    
+    Object.assign(record, {
+      // Phone & Contact
+      phone: place.nationalPhoneNumber || '',
+      international_phone: place.internationalPhoneNumber || null,
+      website_uri: place.websiteUri || null,
+      has_website: hasWebsite,
+      
+      // Ratings & Pricing
+      rating: place.rating || null,
+      rating_count: place.userRatingCount || null,
+      price_level: formatPriceLevel(place.priceLevel),
+      price_range_start: place.priceRange?.startPrice?.units || null,
+      price_range_end: place.priceRange?.endPrice?.units || null,
+      
+      // Hours
+      hours: place.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
+      hours_json: place.regularOpeningHours ? JSON.stringify(place.regularOpeningHours) : null,
+      current_hours_json: place.currentOpeningHours ? JSON.stringify(place.currentOpeningHours) : null,
+      is_open_now: place.currentOpeningHours?.openNow ?? null,
+      
+      details_fetched_at: new Date().toISOString(),
+    });
+  }
+  
+  // Add Atmosphere tier fields if applicable
+  if (dataTier === 'enterprise_atmosphere') {
+    // Transform reviews
+    const reviews = (place.reviews || [])
+      .slice(0, 5)
+      .filter(r => r.text?.text)
+      .map(r => ({
+        text: r.text?.text || '',
+        authorName: r.authorAttribution?.displayName || 'Anonymous',
+        authorDisplayName: formatAuthorDisplayName(r.authorAttribution?.displayName || ''),
+        authorUri: r.authorAttribution?.uri || '',
+        authorPhotoUri: r.authorAttribution?.photoUri || null,
+        rating: r.rating,
+        relativeTime: r.relativePublishTimeDescription,
+        publishTime: r.publishTime || null,
+      }));
+    
+    Object.assign(record, {
+      // Reviews & Summary
+      reviews: JSON.stringify(reviews),
+      editorial_summary: place.editorialSummary?.text || '',
+      review_count: reviews.length,
+      
+      // Atmosphere - general
+      allows_dogs: place.allowsDogs ?? null,
+      good_for_children: place.goodForChildren ?? null,
+      good_for_groups: place.goodForGroups ?? null,
+      good_for_watching_sports: place.goodForWatchingSports ?? null,
+      live_music: place.liveMusic ?? null,
+      menu_for_children: place.menuForChildren ?? null,
+      outdoor_seating: place.outdoorSeating ?? null,
+      reservable: place.reservable ?? null,
+      has_restroom: place.restroom ?? null,
+      
+      // Atmosphere - food & drink
+      serves_beer: place.servesBeer ?? null,
+      serves_breakfast: place.servesBreakfast ?? null,
+      serves_brunch: place.servesBrunch ?? null,
+      serves_cocktails: place.servesCocktails ?? null,
+      serves_coffee: place.servesCoffee ?? null,
+      serves_dessert: place.servesDessert ?? null,
+      serves_dinner: place.servesDinner ?? null,
+      serves_lunch: place.servesLunch ?? null,
+      serves_vegetarian: place.servesVegetarianFood ?? null,
+      serves_wine: place.servesWine ?? null,
+      
+      // Service options
+      has_curbside_pickup: place.curbsidePickup ?? null,
+      has_delivery: place.delivery ?? null,
+      has_dine_in: place.dineIn ?? null,
+      has_takeout: place.takeout ?? null,
+      
+      // Additional options
+      parking_options: place.parkingOptions ? JSON.stringify(place.parkingOptions) : null,
+      payment_options: place.paymentOptions ? JSON.stringify(place.paymentOptions) : null,
+      accessibility_options: place.accessibilityOptions ? JSON.stringify(place.accessibilityOptions) : null,
+      
+      reviews_fetched_at: new Date().toISOString(),
+    });
+  }
+  
+  return record;
 }
 
 async function writeToDynamoDB(businesses: Record<string, unknown>[]): Promise<void> {
@@ -256,10 +609,19 @@ async function writeSearchCache(search: SearchQuery, resultsCount: number): Prom
 
 // ============ Main ============
 
+const TIER_COSTS: Record<DataTier, number> = {
+  pro: 32,
+  enterprise: 35,
+  enterprise_atmosphere: 40,
+};
+
+const TIER_DESCRIPTIONS: Record<DataTier, string> = {
+  pro: 'Pro ($32/1000) - address, location, types',
+  enterprise: 'Enterprise ($35/1000) - Pro + phone, website, rating, hours',
+  enterprise_atmosphere: 'Enterprise+Atmosphere ($40/1000) - Enterprise + reviews, atmosphere',
+};
+
 async function main(): Promise<void> {
-  console.log('=== Search Task (Pro Tier: $32/1000) ===');
-  console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
-  
   // Parse job input from environment
   const jobInputStr = process.env.JOB_INPUT;
   let jobInput: JobInput = {};
@@ -277,7 +639,11 @@ async function main(): Promise<void> {
     searches = [], 
     maxResultsPerSearch = 60,
     skipCachedSearches = false,
+    dataTier = 'enterprise',
   } = jobInput;
+
+  console.log(`=== Search Task - ${TIER_DESCRIPTIONS[dataTier]} ===`);
+  console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
 
   if (searches.length === 0) {
     console.error('No searches provided in job input');
@@ -286,8 +652,15 @@ async function main(): Promise<void> {
 
   console.log(`Processing ${searches.length} searches...`);
   console.log(`Max results per search: ${maxResultsPerSearch}`);
+  console.log(`Data tier: ${dataTier} ($${TIER_COSTS[dataTier]}/1000)`);
   console.log(`Skip cached searches: ${skipCachedSearches}`);
   console.log(`Search cache table: ${SEARCH_CACHE_TABLE_NAME}`);
+  
+  // Log what pipeline steps will be marked complete
+  console.log(`\nPipeline flags that will be set:`);
+  console.log(`  - searched: true`);
+  console.log(`  - details_fetched: ${dataTier === 'enterprise' || dataTier === 'enterprise_atmosphere'}`);
+  console.log(`  - reviews_fetched: ${dataTier === 'enterprise_atmosphere'}`);
 
   const seenPlaceIds = new Set<string>();
   let totalSaved = 0;
@@ -308,10 +681,11 @@ async function main(): Promise<void> {
         }
       }
       
-      // Search with Pro tier fields only (id, displayName, primaryType)
+      // Search with tier-appropriate fields
       const places = await searchPlaces(search.textQuery, {
         includedType: search.includedType,
         maxResults: maxResultsPerSearch,
+        dataTier,
       });
 
       // Write to cache (always, to track when searches were last run)
@@ -323,9 +697,9 @@ async function main(): Promise<void> {
 
       console.log(`  Found ${places.length} places, ${newPlaces.length} new (after dedup)`);
 
-      // Transform to minimal search records and write immediately
+      // Transform to comprehensive records and write immediately
       if (newPlaces.length > 0) {
-        const records = newPlaces.map(place => transformToSearchRecord(place, search));
+        const records = newPlaces.map(place => transformToSearchRecord(place, search, dataTier));
         await writeToDynamoDB(records);
         totalSaved += records.length;
         console.log(`  Saved ${records.length} businesses to DynamoDB (total: ${totalSaved})`);
@@ -342,7 +716,15 @@ async function main(): Promise<void> {
 
   console.log('\n=== Search Task Complete ===');
   console.log(`Total businesses saved: ${totalSaved}`);
-  console.log('Next step: Run details-task to fetch full business details');
+  console.log(`Data tier used: ${dataTier}`);
+  
+  if (dataTier === 'enterprise_atmosphere') {
+    console.log('All data fetched! Next step: Run photos-task for photos, then copy-task for LLM copy');
+  } else if (dataTier === 'enterprise') {
+    console.log('Details fetched! Next step: Run enrich-task for reviews, or photos-task for photos');
+  } else {
+    console.log('Basic data fetched. Next step: Run details-task to fetch contact info & ratings');
+  }
 }
 
 main().catch(error => {

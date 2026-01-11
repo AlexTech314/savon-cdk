@@ -14,7 +14,11 @@ import { stringify } from 'csv-stringify/sync';
 import Anthropic from '@anthropic-ai/sdk';
 
 const client = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(client);
+const docClient = DynamoDBDocumentClient.from(client, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 const TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { createCampaign, updateCampaign } from '@/lib/api';
-import { Campaign, CampaignInput, PLACE_TYPES, SearchQuery } from '@/types/jobs';
+import { Campaign, CampaignInput, PLACE_TYPES, SearchQuery, DataTier, DATA_TIERS } from '@/types/jobs';
 import { GenerateQueriesModal } from './GenerateQueriesModal';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,6 +46,9 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
   );
   const [maxResultsPerSearch, setMaxResultsPerSearch] = useState(
     campaign?.max_results_per_search ?? 60
+  );
+  const [dataTier, setDataTier] = useState<DataTier>(
+    campaign?.data_tier || 'enterprise'
   );
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
 
@@ -157,6 +160,7 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
       })),
       maxResultsPerSearch,
       onlyWithoutWebsite: false, // Website filtering not available in search results
+      dataTier,
     };
 
     if (isEditing) {
@@ -335,7 +339,81 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
       />
 
       {/* Settings */}
-      <div className="pt-4 border-t border-border">
+      <div className="pt-4 border-t border-border space-y-6">
+        {/* Data Tier Selection */}
+        <div className="space-y-3">
+          <div>
+            <Label>Data Tier</Label>
+            <p className="text-sm text-muted-foreground mt-1">
+              Choose how much data to fetch per business. Higher tiers cost more but save on separate API calls.
+            </p>
+          </div>
+          
+          <div className="grid gap-3">
+            {DATA_TIERS.map((tier) => {
+              const isSelected = dataTier === tier.value;
+              return (
+                <div
+                  key={tier.value}
+                  onClick={() => setDataTier(tier.value)}
+                  className={`relative cursor-pointer rounded-lg border-2 p-4 transition-all ${
+                    isSelected 
+                      ? 'border-primary bg-primary/5' 
+                      : 'border-border hover:border-muted-foreground/50'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold">{tier.label}</span>
+                        <Badge variant={isSelected ? 'default' : 'secondary'} className="text-xs">
+                          ${tier.cost}/1000
+                        </Badge>
+                        {tier.value === 'enterprise' && (
+                          <Badge variant="outline" className="text-xs text-primary border-primary">
+                            Recommended
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground">{tier.description}</p>
+                    </div>
+                    <div className={`h-5 w-5 rounded-full border-2 flex items-center justify-center ${
+                      isSelected ? 'border-primary bg-primary' : 'border-muted-foreground/30'
+                    }`}>
+                      {isSelected && (
+                        <div className="h-2 w-2 rounded-full bg-white" />
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Included features */}
+                  <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1">
+                    {tier.includes.map((feature, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <div className={`h-1.5 w-1.5 rounded-full ${isSelected ? 'bg-primary' : 'bg-muted-foreground/50'}`} />
+                        {feature}
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Pipeline status hint */}
+                  {tier.value !== 'pro' && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <p className="text-xs text-muted-foreground">
+                        {tier.value === 'enterprise_atmosphere' 
+                          ? '✓ Details and Reviews marked complete — only Photos and Copy tasks needed'
+                          : '✓ Details marked complete — Reviews, Photos, and Copy tasks needed'
+                        }
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Max Results */}
         <div className="space-y-2">
           <Label htmlFor="maxResults">Max Results Per Search</Label>
           <Input

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { getCampaigns, deleteCampaign, runCampaign } from '@/lib/api';
-import { Campaign } from '@/types/jobs';
-import { CampaignForm } from '@/components/campaigns/CampaignForm';
+import { Campaign, DATA_TIERS } from '@/types/jobs';
 import { estimateCampaignCost } from '@/lib/pricing';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -31,33 +32,26 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { 
   Plus, 
   MoreHorizontal, 
   Play, 
-  Pencil, 
+  Eye, 
   Trash2,
   Search,
   Loader2,
   Megaphone,
   RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 const Campaigns: React.FC = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
 
@@ -93,8 +87,8 @@ const Campaigns: React.FC = () => {
       toast({
         title: 'Campaign Started',
         description: variables.skipCachedSearches
-          ? `Job ${job.job_id} is running (skipping cached searches).`
-          : `Job ${job.job_id} is running (fresh search - all queries).`,
+          ? `Job ${job.job_id.slice(0, 8)}... is running.`
+          : `Job ${job.job_id.slice(0, 8)}... is running (fresh).`,
       });
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       queryClient.invalidateQueries({ queryKey: ['jobs'] });
@@ -108,24 +102,14 @@ const Campaigns: React.FC = () => {
     },
   });
 
-  const handleEdit = (campaign: Campaign) => {
-    setEditingCampaign(campaign);
-    setFormOpen(true);
-  };
-
   const handleDelete = (campaign: Campaign) => {
     setCampaignToDelete(campaign);
     setDeleteDialogOpen(true);
   };
-
-  const handleFormClose = () => {
-    setFormOpen(false);
-    setEditingCampaign(null);
-  };
-
-  const handleFormSuccess = () => {
-    handleFormClose();
-    queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+  
+  const getTierLabel = (tier?: string) => {
+    const config = DATA_TIERS.find(t => t.value === tier);
+    return config?.label || 'Enterprise';
   };
 
   return (
@@ -137,7 +121,7 @@ const Campaigns: React.FC = () => {
             Define search criteria to find leads via Google Places
           </p>
         </div>
-        <Button onClick={() => setFormOpen(true)} className="gap-2">
+        <Button onClick={() => navigate('/campaigns/new')} className="gap-2">
           <Plus className="h-4 w-4" />
           Create Campaign
         </Button>
@@ -165,7 +149,7 @@ const Campaigns: React.FC = () => {
               <p className="text-muted-foreground mb-4">
                 Create a campaign to start searching for leads.
               </p>
-              <Button onClick={() => setFormOpen(true)}>
+              <Button onClick={() => navigate('/campaigns/new')}>
                 <Plus className="h-4 w-4 mr-2" />
                 Create Your First Campaign
               </Button>
@@ -175,52 +159,49 @@ const Campaigns: React.FC = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
-                  <TableHead>Searches</TableHead>
-                  <TableHead>Max Results</TableHead>
-                  <TableHead>Price per Run</TableHead>
+                  <TableHead>Queries</TableHead>
+                  <TableHead>Data Tier</TableHead>
+                  <TableHead>Est. Cost</TableHead>
                   <TableHead>Last Run</TableHead>
                   <TableHead className="w-[100px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {campaigns.map((campaign) => (
-                  <TableRow key={campaign.campaign_id}>
+                  <TableRow 
+                    key={campaign.campaign_id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => navigate(`/campaigns/${campaign.campaign_id}`)}
+                  >
                     <TableCell>
                       <div>
-                        <div className="font-medium">{campaign.name}</div>
+                        <div className="font-medium flex items-center gap-2">
+                          {campaign.name}
+                          <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                        </div>
                         {campaign.description && (
-                          <div className="text-sm text-muted-foreground">
+                          <div className="text-sm text-muted-foreground line-clamp-1">
                             {campaign.description}
                           </div>
                         )}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {campaign.searches.slice(0, 2).map((search, i) => (
-                          <Badge key={i} variant="secondary" className="text-xs">
-                            {search.textQuery.length > 20
-                              ? search.textQuery.substring(0, 20) + '...'
-                              : search.textQuery}
-                          </Badge>
-                        ))}
-                        {campaign.searches.length > 2 && (
-                          <Badge variant="outline" className="text-xs">
-                            +{campaign.searches.length - 2} more
-                          </Badge>
-                        )}
-                      </div>
+                      <Badge variant="secondary">
+                        {campaign.searches.length} queries
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">
-                        {campaign.max_results_per_search} per search
+                        {getTierLabel(campaign.data_tier)}
                       </Badge>
                     </TableCell>
                     <TableCell>
                       <span className="text-sm font-medium text-primary">
                         {estimateCampaignCost(
                           campaign.searches.length,
-                          campaign.max_results_per_search
+                          campaign.max_results_per_search,
+                          campaign.data_tier
                         ).formatted}
                       </span>
                     </TableCell>
@@ -233,7 +214,7 @@ const Campaigns: React.FC = () => {
                         <span className="text-sm text-muted-foreground">Never</span>
                       )}
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon">
@@ -241,6 +222,13 @@ const Campaigns: React.FC = () => {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => navigate(`/campaigns/${campaign.campaign_id}`)}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            View Details
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={() => runMutation.mutate({ 
                               campaignId: campaign.campaign_id, 
@@ -261,10 +249,7 @@ const Campaigns: React.FC = () => {
                             <RefreshCw className="h-4 w-4 mr-2" />
                             Run (fresh search)
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleEdit(campaign)}>
-                            <Pencil className="h-4 w-4 mr-2" />
-                            Edit
-                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={() => handleDelete(campaign)}
                             className="text-destructive"
@@ -282,27 +267,6 @@ const Campaigns: React.FC = () => {
           )}
         </CardContent>
       </Card>
-
-      {/* Create/Edit Campaign Dialog */}
-      <Dialog open={formOpen} onOpenChange={handleFormClose}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {editingCampaign ? 'Edit Campaign' : 'Create Campaign'}
-            </DialogTitle>
-            <DialogDescription>
-              {editingCampaign
-                ? 'Update the campaign search configuration.'
-                : 'Define search criteria to find new leads.'}
-            </DialogDescription>
-          </DialogHeader>
-          <CampaignForm
-            campaign={editingCampaign}
-            onSuccess={handleFormSuccess}
-            onCancel={handleFormClose}
-          />
-        </DialogContent>
-      </Dialog>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

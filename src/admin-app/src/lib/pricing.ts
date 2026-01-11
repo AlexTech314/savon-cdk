@@ -20,14 +20,20 @@
 
 export const PRICING = {
   google: {
-    // Text Search (New) - Pro tier - $32/1000 requests
+    // Text Search (New) - tiered pricing based on data requested
     // Each search can return up to 20 results per page
     // Pagination uses additional requests (up to 3 pages = 60 results max)
     textSearch: {
-      pricePerRequest: 0.032, // $32/1000
+      pricePerRequest: 0.032, // Pro tier default: $32/1000
       resultsPerPage: 20,
       maxPages: 3,
       maxResultsPerQuery: 60,
+      // Tiered pricing for different data levels
+      tierPricing: {
+        pro: 0.032,                    // $32/1000 - address, location, types
+        enterprise: 0.035,             // $35/1000 - + phone, website, rating, hours
+        enterprise_atmosphere: 0.040,  // $40/1000 - + reviews, atmosphere data
+      },
     },
     
     // Place Details (Basic tier) - $5/1000 requests
@@ -577,40 +583,82 @@ export function estimatePipelineJobCost(
   };
 }
 
+type DataTier = 'pro' | 'enterprise' | 'enterprise_atmosphere';
+
+const TIER_LABELS: Record<DataTier, string> = {
+  pro: 'Pro',
+  enterprise: 'Enterprise',
+  enterprise_atmosphere: 'Enterprise + Atmosphere',
+};
+
 /**
- * Estimate cost for a campaign run (SEARCH ONLY)
+ * Estimate cost for a campaign run
  * 
- * Campaigns only perform Text Search operations.
- * They find businesses but don't fetch details, reviews, or generate copy.
+ * Campaigns perform Text Search at the specified data tier.
+ * Higher tiers cost more but include more data per request.
  * 
  * @param numSearches - Number of search queries in the campaign
  * @param maxResultsPerSearch - Max results per search (affects pagination)
+ * @param dataTier - Data tier: 'pro' ($32), 'enterprise' ($35), or 'enterprise_atmosphere' ($40)
  * @param currentMonthlyRequests - Current monthly requests for volume discount
  */
 export function estimateCampaignCost(
   numSearches: number,
   maxResultsPerSearch: number,
+  dataTier: DataTier = 'enterprise',
   currentMonthlyRequests: number = 0
 ): CostBreakdown {
-  // Campaigns ONLY run search - no details, reviews, photos, or copy
-  const searchCost = estimateSearchCost(numSearches, maxResultsPerSearch, currentMonthlyRequests);
-  
   const pagesPerSearch = calculatePagesNeeded(maxResultsPerSearch);
   const totalApiCalls = numSearches * pagesPerSearch;
   const estimatedResults = Math.min(numSearches * maxResultsPerSearch, numSearches * 60);
   
+  // Get tier-specific pricing
+  const tierPricing = PRICING.google.textSearch.tierPricing as Record<DataTier, number>;
+  const unitCost = tierPricing[dataTier] || tierPricing.enterprise;
+  
+  let baseCost = totalApiCalls * unitCost;
+  
+  // Apply volume discount if applicable
+  const totalWithNew = currentMonthlyRequests + totalApiCalls;
+  let discount = 0;
+  if (totalWithNew > 5000000) discount = 0.20;
+  else if (totalWithNew > 1000000) discount = 0.15;
+  else if (totalWithNew > 500000) discount = 0.10;
+  else if (totalWithNew > 100000) discount = 0.05;
+  
+  const discountedCost = baseCost * (1 - discount);
+  
+  const items = [{
+    name: `Text Search (${TIER_LABELS[dataTier]})`,
+    count: totalApiCalls,
+    unitCost,
+    subtotal: discountedCost,
+  }];
+  
+  const formattedBreakdown = [
+    `Data Tier: ${TIER_LABELS[dataTier]} ($${(unitCost * 1000).toFixed(0)}/1000)`,
+    `Queries: ${numSearches.toLocaleString()}`,
+    `Max results/query: ${maxResultsPerSearch} (${pagesPerSearch} page${pagesPerSearch > 1 ? 's' : ''})`,
+    `Total API calls: ${totalApiCalls.toLocaleString()}`,
+    `Est. businesses found: up to ${estimatedResults.toLocaleString()}`,
+  ];
+  
+  if (discount > 0) {
+    formattedBreakdown.push(`Volume discount: ${(discount * 100).toFixed(0)}% off`);
+  }
+  
+  // Add info about what's included
+  if (dataTier === 'enterprise_atmosphere') {
+    formattedBreakdown.push('', '✓ Includes: Details + Reviews (no separate calls needed)');
+  } else if (dataTier === 'enterprise') {
+    formattedBreakdown.push('', '✓ Includes: Details (Reviews still need separate call)');
+  }
+  
   return {
-    total: searchCost.total,
-    items: searchCost.items,
-    formatted: searchCost.formatted,
-    formattedBreakdown: [
-      `Queries: ${numSearches.toLocaleString()}`,
-      `Max results/query: ${maxResultsPerSearch} (${pagesPerSearch} page${pagesPerSearch > 1 ? 's' : ''})`,
-      `Total API calls: ${totalApiCalls.toLocaleString()}`,
-      `Est. businesses found: up to ${estimatedResults.toLocaleString()}`,
-      '',
-      ...searchCost.formattedBreakdown,
-    ],
+    total: discountedCost,
+    items,
+    formatted: formatCost(discountedCost),
+    formattedBreakdown,
   };
 }
 

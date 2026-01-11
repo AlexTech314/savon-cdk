@@ -2,7 +2,11 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
@@ -123,28 +127,119 @@ interface Business {
 }
 
 interface PlaceEnrichment {
+  // Reviews
   reviews?: Array<{
     text?: { text: string };
     rating?: number;
-    authorAttribution?: { displayName?: string; uri?: string };
+    authorAttribution?: { displayName?: string; uri?: string; photoUri?: string };
     relativePublishTimeDescription?: string;
+    publishTime?: string;
+    originalText?: { text: string };
   }>;
   editorialSummary?: { text: string };
+  
+  // Atmosphere fields
+  allowsDogs?: boolean;
+  goodForChildren?: boolean;
+  goodForGroups?: boolean;
+  goodForWatchingSports?: boolean;
+  liveMusic?: boolean;
+  menuForChildren?: boolean;
+  outdoorSeating?: boolean;
+  reservable?: boolean;
+  restroom?: boolean;
+  servesBeer?: boolean;
+  servesBreakfast?: boolean;
+  servesBrunch?: boolean;
+  servesCocktails?: boolean;
+  servesCoffee?: boolean;
+  servesDessert?: boolean;
+  servesDinner?: boolean;
+  servesLunch?: boolean;
+  servesVegetarianFood?: boolean;
+  servesWine?: boolean;
+  
+  // Service options
+  curbsidePickup?: boolean;
+  delivery?: boolean;
+  dineIn?: boolean;
+  takeout?: boolean;
+  
+  // Additional
+  parkingOptions?: {
+    freeParkingLot?: boolean;
+    paidParkingLot?: boolean;
+    freeStreetParking?: boolean;
+    paidStreetParking?: boolean;
+    valetParking?: boolean;
+    freeGarageParking?: boolean;
+    paidGarageParking?: boolean;
+  };
+  paymentOptions?: {
+    acceptsCreditCards?: boolean;
+    acceptsDebitCards?: boolean;
+    acceptsCashOnly?: boolean;
+    acceptsNfc?: boolean;
+  };
+  accessibilityOptions?: {
+    wheelchairAccessibleParking?: boolean;
+    wheelchairAccessibleEntrance?: boolean;
+    wheelchairAccessibleRestroom?: boolean;
+    wheelchairAccessibleSeating?: boolean;
+  };
 }
 
 // ============ API Functions ============
 
 /**
- * Get reviews and editorial summary using Place Details API (Enterprise+Atmosphere tier: $25/1000)
- * Only requests: reviews, editorialSummary
+ * Get reviews, editorial summary, and all atmosphere data using Place Details API
+ * Enterprise+Atmosphere tier: $25/1000 - maximize data capture!
  */
 async function getPlaceEnrichment(placeId: string): Promise<PlaceEnrichment> {
   await rateLimiter.acquire();
   
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   
-  // Enterprise+Atmosphere tier fields
-  const fieldMask = 'reviews,editorialSummary';
+  // ALL Enterprise+Atmosphere tier fields - maximize data capture at $25/1000
+  const fieldMask = [
+    // Reviews & Summary
+    'reviews',
+    'editorialSummary',
+    
+    // Atmosphere - general
+    'allowsDogs',
+    'goodForChildren',
+    'goodForGroups',
+    'goodForWatchingSports',
+    'liveMusic',
+    'menuForChildren',
+    'outdoorSeating',
+    'reservable',
+    'restroom',
+    
+    // Atmosphere - food & drink
+    'servesBeer',
+    'servesBreakfast',
+    'servesBrunch',
+    'servesCocktails',
+    'servesCoffee',
+    'servesDessert',
+    'servesDinner',
+    'servesLunch',
+    'servesVegetarianFood',
+    'servesWine',
+    
+    // Service options
+    'curbsidePickup',
+    'delivery',
+    'dineIn',
+    'takeout',
+    
+    // Additional useful fields
+    'parkingOptions',
+    'paymentOptions',
+    'accessibilityOptions',
+  ].join(',');
 
   const response = await fetch(url, {
     method: 'GET',
@@ -229,7 +324,7 @@ async function getBusinessesNeedingEnrichment(
 }
 
 /**
- * Update business with reviews and editorial summary
+ * Update business with reviews, editorial summary, and all atmosphere data
  */
 async function updateBusinessWithEnrichment(placeId: string, enrichment: PlaceEnrichment): Promise<void> {
   // Transform reviews to a cleaner format
@@ -238,17 +333,55 @@ async function updateBusinessWithEnrichment(placeId: string, enrichment: PlaceEn
     .filter(r => r.text?.text)
     .map(r => ({
       text: r.text?.text || '',
+      originalText: r.originalText?.text || null,
       authorName: r.authorAttribution?.displayName || 'Anonymous',
       authorDisplayName: formatAuthorDisplayName(r.authorAttribution?.displayName || ''),
       authorUri: r.authorAttribution?.uri || '',
+      authorPhotoUri: r.authorAttribution?.photoUri || null,
       rating: r.rating,
       relativeTime: r.relativePublishTimeDescription,
+      publishTime: r.publishTime || null,
     }));
 
   const updateFields: Record<string, unknown> = {
+    // Reviews & Summary
     reviews: JSON.stringify(reviews),
     editorial_summary: enrichment.editorialSummary?.text || '',
     review_count: reviews.length,
+    
+    // Atmosphere - general
+    allows_dogs: enrichment.allowsDogs ?? null,
+    good_for_children: enrichment.goodForChildren ?? null,
+    good_for_groups: enrichment.goodForGroups ?? null,
+    good_for_watching_sports: enrichment.goodForWatchingSports ?? null,
+    live_music: enrichment.liveMusic ?? null,
+    menu_for_children: enrichment.menuForChildren ?? null,
+    outdoor_seating: enrichment.outdoorSeating ?? null,
+    reservable: enrichment.reservable ?? null,
+    has_restroom: enrichment.restroom ?? null,
+    
+    // Atmosphere - food & drink
+    serves_beer: enrichment.servesBeer ?? null,
+    serves_breakfast: enrichment.servesBreakfast ?? null,
+    serves_brunch: enrichment.servesBrunch ?? null,
+    serves_cocktails: enrichment.servesCocktails ?? null,
+    serves_coffee: enrichment.servesCoffee ?? null,
+    serves_dessert: enrichment.servesDessert ?? null,
+    serves_dinner: enrichment.servesDinner ?? null,
+    serves_lunch: enrichment.servesLunch ?? null,
+    serves_vegetarian: enrichment.servesVegetarianFood ?? null,
+    serves_wine: enrichment.servesWine ?? null,
+    
+    // Service options
+    has_curbside_pickup: enrichment.curbsidePickup ?? null,
+    has_delivery: enrichment.delivery ?? null,
+    has_dine_in: enrichment.dineIn ?? null,
+    has_takeout: enrichment.takeout ?? null,
+    
+    // Additional options (as JSON for flexibility)
+    parking_options: enrichment.parkingOptions ? JSON.stringify(enrichment.parkingOptions) : null,
+    payment_options: enrichment.paymentOptions ? JSON.stringify(enrichment.paymentOptions) : null,
+    accessibility_options: enrichment.accessibilityOptions ? JSON.stringify(enrichment.accessibilityOptions) : null,
     
     // Pipeline status flags
     reviews_fetched: true,

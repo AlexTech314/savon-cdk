@@ -2,7 +2,11 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
-const docClient = DynamoDBDocumentClient.from(dynamoClient);
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
@@ -126,49 +130,78 @@ interface Business {
   [key: string]: unknown;
 }
 
+interface OpeningHours {
+  openNow?: boolean;
+  weekdayDescriptions?: string[];
+  periods?: Array<{
+    open: { day: number; hour: number; minute: number };
+    close?: { day: number; hour: number; minute: number };
+  }>;
+}
+
 interface PlaceDetails {
   id: string;
   displayName?: { text: string };
   formattedAddress?: string;
+  addressComponents?: Array<{ longText: string; shortText: string; types: string[] }>;
+  location?: { latitude: number; longitude: number };
+  googleMapsUri?: string;
+  primaryType?: string;
+  
+  // Enterprise tier fields
   nationalPhoneNumber?: string;
+  internationalPhoneNumber?: string;
   websiteUri?: string;
   rating?: number;
   userRatingCount?: number;
-  regularOpeningHours?: { weekdayDescriptions?: string[] };
-  googleMapsUri?: string;
-  location?: { latitude: number; longitude: number };
-  addressComponents?: Array<{ longText: string; shortText: string; types: string[] }>;
-  primaryType?: string;
+  priceLevel?: string;  // PRICE_LEVEL_FREE, PRICE_LEVEL_INEXPENSIVE, etc.
+  priceRange?: { startPrice?: { units: string }; endPrice?: { units: string } };
+  regularOpeningHours?: OpeningHours;
+  currentOpeningHours?: OpeningHours;
+  regularSecondaryOpeningHours?: Array<{ type: string; periods: OpeningHours['periods'] }>;
+  currentSecondaryOpeningHours?: Array<{ type: string; periods: OpeningHours['periods'] }>;
 }
 
 // ============ API Functions ============
 
 /**
  * Get place details using Place Details API (Enterprise tier: $20/1000)
- * Requests: formattedAddress, addressComponents, nationalPhoneNumber, rating, 
- *           userRatingCount, regularOpeningHours, websiteUri, googleMapsUri, location
+ * Captures ALL Enterprise tier fields for maximum data
  * 
- * Does NOT request: reviews, editorialSummary (those are Enterprise+Atmosphere tier)
+ * Does NOT request: reviews, editorialSummary, atmosphere fields (those are Enterprise+Atmosphere tier @ $25/1000)
  */
 async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
   await rateLimiter.acquire();
   
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   
-  // Enterprise tier fields (NO reviews or editorialSummary - those add $5/1000)
+  // ALL Enterprise tier fields - maximize data capture at $20/1000
   const fieldMask = [
+    // Basic fields (may already have from search, but good to re-verify)
     'id',
     'displayName',
     'formattedAddress',
     'addressComponents',
+    'location',
+    'googleMapsUri',
+    'primaryType',
+    
+    // Enterprise tier fields - phone & contact
     'nationalPhoneNumber',
+    'internationalPhoneNumber',
+    'websiteUri',
+    
+    // Enterprise tier fields - ratings & pricing
     'rating',
     'userRatingCount',
+    'priceLevel',
+    'priceRange',
+    
+    // Enterprise tier fields - hours
     'regularOpeningHours',
-    'websiteUri',
-    'googleMapsUri',
-    'location',
-    'primaryType',
+    'currentOpeningHours',
+    'regularSecondaryOpeningHours',
+    'currentSecondaryOpeningHours',
   ].join(',');
 
   const response = await fetch(url, {
@@ -249,30 +282,65 @@ async function getBusinessesNeedingDetails(placeIds?: string[], filterRules: Fil
 }
 
 /**
+ * Convert price level enum to readable string
+ */
+function formatPriceLevel(priceLevel?: string): string | null {
+  if (!priceLevel) return null;
+  const mapping: Record<string, string> = {
+    'PRICE_LEVEL_FREE': 'Free',
+    'PRICE_LEVEL_INEXPENSIVE': '$',
+    'PRICE_LEVEL_MODERATE': '$$',
+    'PRICE_LEVEL_EXPENSIVE': '$$$',
+    'PRICE_LEVEL_VERY_EXPENSIVE': '$$$$',
+  };
+  return mapping[priceLevel] || priceLevel;
+}
+
+/**
  * Update business with details from Google Places API
+ * Saves ALL Enterprise tier fields
  */
 async function updateBusinessWithDetails(placeId: string, details: PlaceDetails): Promise<void> {
   const streetNumber = extractAddressComponent(details.addressComponents, 'street_number');
   const route = extractAddressComponent(details.addressComponents, 'route');
+  const city = extractAddressComponent(details.addressComponents, 'locality') || 
+               extractAddressComponent(details.addressComponents, 'sublocality') ||
+               extractCity(details.formattedAddress || '');
   const state = extractAddressComponent(details.addressComponents, 'administrative_area_level_1');
+  const country = extractAddressComponent(details.addressComponents, 'country');
   const hasWebsite = !!details.websiteUri;
 
   const updateFields: Record<string, unknown> = {
-    // Business details
+    // Address fields (re-verify from details API for accuracy)
     address: details.formattedAddress || '',
-    city: extractCity(details.formattedAddress || ''),
-    state: state,
-    street: [streetNumber, route].filter(Boolean).join(' '),
-    zip_code: extractAddressComponent(details.addressComponents, 'postal_code'),
-    phone: details.nationalPhoneNumber || '',
-    rating: details.rating || null,
-    rating_count: details.userRatingCount || null,
-    hours: details.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
-    google_maps_uri: details.googleMapsUri || '',
+    city: city || null,
+    state: state || null,
+    street: [streetNumber, route].filter(Boolean).join(' ') || null,
+    zip_code: extractAddressComponent(details.addressComponents, 'postal_code') || null,
+    country: country || null,
     latitude: details.location?.latitude || null,
     longitude: details.location?.longitude || null,
-    website_uri: details.websiteUri || null,
+    google_maps_uri: details.googleMapsUri || '',
     primary_type: details.primaryType || null,
+    
+    // Enterprise tier: Phone & Contact
+    phone: details.nationalPhoneNumber || '',
+    international_phone: details.internationalPhoneNumber || null,
+    website_uri: details.websiteUri || null,
+    
+    // Enterprise tier: Ratings & Pricing
+    rating: details.rating || null,
+    rating_count: details.userRatingCount || null,
+    price_level: formatPriceLevel(details.priceLevel),
+    price_range_start: details.priceRange?.startPrice?.units || null,
+    price_range_end: details.priceRange?.endPrice?.units || null,
+    
+    // Enterprise tier: Hours
+    hours: details.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
+    hours_json: details.regularOpeningHours ? JSON.stringify(details.regularOpeningHours) : null,
+    current_hours_json: details.currentOpeningHours ? JSON.stringify(details.currentOpeningHours) : null,
+    is_open_now: details.currentOpeningHours?.openNow ?? null,
+    secondary_hours_json: details.regularSecondaryOpeningHours ? JSON.stringify(details.regularSecondaryOpeningHours) : null,
     
     // Update business name if we have a better one
     business_name: details.displayName?.text || undefined,

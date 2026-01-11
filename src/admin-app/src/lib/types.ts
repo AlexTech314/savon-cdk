@@ -26,6 +26,9 @@ export interface Business {
   photos_fetched?: boolean;
   copy_generated?: boolean;
   has_website?: boolean;
+  
+  // Data tier used during search
+  data_tier?: 'pro' | 'enterprise' | 'enterprise_atmosphere';
 }
 
 export interface Job {

@@ -9,6 +9,7 @@ import { Layout } from "@/components/layout/Layout";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Campaigns from "@/pages/Campaigns";
+import CampaignDetailPage from "@/pages/CampaignDetailPage";
 import Businesses from "@/pages/Businesses";
 import BusinessDetailPage from "@/pages/BusinessDetailPage";
 import Import from "@/pages/Import";
@@ -39,6 +40,8 @@ const App = () => (
               <Route element={<Layout />}>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/campaigns" element={<Campaigns />} />
+                <Route path="/campaigns/new" element={<CampaignDetailPage />} />
+                <Route path="/campaigns/:campaign_id" element={<CampaignDetailPage />} />
                 <Route path="/businesses" element={<Businesses />} />
                 <Route path="/businesses/import" element={<Import />} />
                 <Route path="/businesses/:place_id" element={<BusinessDetailPage />} />

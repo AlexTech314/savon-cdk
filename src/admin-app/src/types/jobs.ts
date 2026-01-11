@@ -28,6 +28,65 @@ export interface SearchQuery {
   includedType?: string;
 }
 
+/**
+ * Data tier determines which Google Places API fields are fetched during search.
+ * Higher tiers cost more but get more data in a single call.
+ */
+export type DataTier = 'pro' | 'enterprise' | 'enterprise_atmosphere';
+
+/**
+ * Data tier configuration with labels and descriptions
+ */
+export const DATA_TIERS: { 
+  value: DataTier; 
+  label: string; 
+  cost: number;
+  description: string;
+  includes: string[];
+}[] = [
+  { 
+    value: 'pro', 
+    label: 'Pro', 
+    cost: 32,
+    description: 'Basic business data - address, location, types, status',
+    includes: [
+      'Business name & type',
+      'Full address (street, city, state, zip)',
+      'GPS coordinates',
+      'Business status (open/closed)',
+      'Google Maps link',
+    ],
+  },
+  { 
+    value: 'enterprise', 
+    label: 'Enterprise', 
+    cost: 35,
+    description: 'Contact & ratings data - everything needed for outreach',
+    includes: [
+      'Everything in Pro',
+      'Phone number',
+      'Website URL',
+      'Rating & review count',
+      'Business hours',
+      'Price level',
+    ],
+  },
+  { 
+    value: 'enterprise_atmosphere', 
+    label: 'Enterprise + Atmosphere', 
+    cost: 40,
+    description: 'Complete data - includes reviews and atmosphere info',
+    includes: [
+      'Everything in Enterprise',
+      'Customer reviews (top 5)',
+      'Editorial summary',
+      'Service options (delivery, dine-in, takeout)',
+      'Atmosphere (outdoor seating, reservations, etc.)',
+      'Accessibility options',
+    ],
+  },
+];
+
 export interface PlacesConfig {
   searches: SearchQuery[];
   maxResultsPerSearch?: number;
@@ -53,6 +112,7 @@ export interface Campaign {
   searches: SearchQuery[];
   max_results_per_search: number;
   only_without_website: boolean;
+  data_tier: DataTier;
   created_at: string;
   updated_at: string;
   last_run_at?: string;
@@ -65,6 +125,7 @@ export interface CampaignInput {
   searches: SearchQuery[];
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
+  dataTier?: DataTier;
 }
 
 export interface Job {
