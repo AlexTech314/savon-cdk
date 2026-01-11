@@ -14,6 +14,7 @@ import BusinessDetailPage from "@/pages/BusinessDetailPage";
 import Import from "@/pages/Import";
 import Jobs from "@/pages/Jobs";
 import Settings from "@/pages/Settings";
+import Pricing from "@/pages/Pricing";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -43,6 +44,7 @@ const App = () => (
                 <Route path="/businesses/:place_id" element={<BusinessDetailPage />} />
                 <Route path="/jobs" element={<Jobs />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/settings/pricing" element={<Pricing />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

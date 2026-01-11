@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Business } from '@/lib/types';
-import { generateCopy } from '@/lib/api';
+import { generateFullPipeline } from '@/lib/api';
+import { estimatePipelineCost } from '@/lib/pricing';
 import {
   Table,
   TableBody,
@@ -13,6 +14,13 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { CostTooltip } from '@/components/ui/cost-tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -26,8 +34,91 @@ import {
   Loader2,
   Sparkles,
   ExternalLink,
+  Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+// Get cost estimate for single business pipeline
+const pipelineCost = estimatePipelineCost(1);
+
+// Pipeline status badge component
+const PipelineStatusBadge: React.FC<{ 
+  label: string; 
+  done: boolean; 
+  tooltip: string;
+}> = ({ label, done, tooltip }) => (
+  <TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={cn(
+            'inline-flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold',
+            done 
+              ? 'bg-green-500/20 text-green-600 dark:text-green-400' 
+              : 'bg-muted text-muted-foreground'
+          )}
+        >
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{tooltip}</p>
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+);
+
+// Pipeline status display component
+const PipelineStatus: React.FC<{ business: Business }> = ({ business }) => {
+  // If business has a website, show a different indicator
+  if (business.has_website) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge variant="secondary" className="gap-1 text-xs">
+              <Globe className="h-3 w-3" />
+              Website
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Business has a website - excluded from pipeline</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-0.5">
+      <PipelineStatusBadge 
+        label="S" 
+        done={!!business.searched} 
+        tooltip={business.searched ? 'Searched' : 'Not searched'} 
+      />
+      <PipelineStatusBadge 
+        label="D" 
+        done={!!business.details_fetched} 
+        tooltip={business.details_fetched ? 'Details fetched' : 'Details pending'} 
+      />
+      <PipelineStatusBadge 
+        label="R" 
+        done={!!business.reviews_fetched} 
+        tooltip={business.reviews_fetched ? 'Reviews fetched' : 'Reviews pending'} 
+      />
+      <PipelineStatusBadge 
+        label="P" 
+        done={!!business.photos_fetched} 
+        tooltip={business.photos_fetched ? 'Photos fetched' : 'Photos pending'} 
+      />
+      <PipelineStatusBadge 
+        label="C" 
+        done={!!business.copy_generated} 
+        tooltip={business.copy_generated ? 'Copy generated' : 'Copy pending'} 
+      />
+    </div>
+  );
+};
 
 interface BusinessTableProps {
   businesses: Business[];
@@ -66,15 +157,21 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
 
   const handleGeneratePreview = async (business: Business) => {
     setGeneratingId(business.place_id);
-    setGeneratingStatus('Generating preview with AI...');
     
     try {
-      await generateCopy(business.place_id);
-      setGeneratingStatus('Preview generated!');
+      // Use full pipeline with progress callback
+      await generateFullPipeline(
+        business.place_id,
+        (step) => {
+          setGeneratingStatus(step);
+        }
+      );
+      
+      setGeneratingStatus('Complete!');
       
       toast({
-        title: 'Preview Generated',
-        description: `Preview created for "${business.name}"`,
+        title: 'Pipeline Complete',
+        description: `Preview generated for "${business.name}"`,
       });
       
       // Refresh the businesses list
@@ -88,7 +185,7 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
       }, 1500);
     } catch (error) {
       console.error('Failed to generate preview:', error);
-      setGeneratingStatus('Failed to generate');
+      setGeneratingStatus('Failed');
       
       toast({
         title: 'Error',
@@ -125,8 +222,8 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
     { key: 'business_type', label: 'Type', sortable: true },
     { key: 'city', label: 'City', sortable: true },
     { key: 'state', label: 'State', sortable: true },
-    { key: 'phone', label: 'Phone', sortable: false },
-    { key: 'preview', label: 'Preview', sortable: false },
+    { key: 'pipeline', label: 'Pipeline', sortable: false },
+    { key: 'actions', label: 'Actions', sortable: false },
   ];
 
   if (isLoading && businesses.length === 0) {
@@ -228,47 +325,58 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                 </TableCell>
                 <TableCell>{business.city}</TableCell>
                 <TableCell>{business.state}</TableCell>
-                <TableCell className="text-muted-foreground">{business.phone}</TableCell>
+                <TableCell>
+                  <PipelineStatus business={business} />
+                </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   {generatingId === business.place_id ? (
                     <div className="flex items-center gap-2 text-sm">
-                      {generatingStatus.includes('Generated') || generatingStatus.includes('created') ? (
-                        <Check className="h-4 w-4 text-accent" />
+                      {generatingStatus.includes('Complete') || generatingStatus.includes('generated') ? (
+                        <Check className="h-4 w-4 text-green-500" />
                       ) : generatingStatus.includes('Failed') ? (
                         <X className="h-4 w-4 text-destructive" />
                       ) : (
                         <Loader2 className="h-4 w-4 animate-spin text-primary" />
                       )}
                       <span className={cn(
-                        'text-xs',
-                        generatingStatus.includes('Generated') && 'text-accent',
+                        'text-xs max-w-[120px] truncate',
+                        generatingStatus.includes('Complete') && 'text-green-500',
                         generatingStatus.includes('Failed') && 'text-destructive',
-                        !generatingStatus.includes('Generated') && !generatingStatus.includes('Failed') && 'text-muted-foreground'
+                        !generatingStatus.includes('Complete') && !generatingStatus.includes('Failed') && 'text-muted-foreground'
                       )}>
                         {generatingStatus}
                       </span>
                     </div>
-                  ) : business.generated_copy ? (
+                  ) : business.has_website ? (
+                    <Badge variant="outline" className="text-xs text-muted-foreground">
+                      Has Website
+                    </Badge>
+                  ) : business.copy_generated ? (
                     <Button
                       variant="outline"
                       size="sm"
                       className="gap-1 h-7 text-xs"
-                      onClick={() => window.open(`https://alpha.savondesigns.com/preview/${business.place_id}`, '_blank')}
+                      onClick={() => window.open(`https://preview-alpha.savondesigns.com/${business.friendly_slug || business.place_id}`, '_blank')}
                     >
                       <ExternalLink className="h-3 w-3" />
                       View
                     </Button>
                   ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1 h-7 text-xs"
-                      onClick={() => handleGeneratePreview(business)}
-                      disabled={generatingId !== null}
+                    <CostTooltip
+                      cost={pipelineCost.total}
+                      breakdown={pipelineCost.formattedBreakdown}
                     >
-                      <Sparkles className="h-3 w-3" />
-                      Generate
-                    </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1 h-7 text-xs"
+                        onClick={() => handleGeneratePreview(business)}
+                        disabled={generatingId !== null}
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        Generate
+                      </Button>
+                    </CostTooltip>
                   )}
                 </TableCell>
               </TableRow>

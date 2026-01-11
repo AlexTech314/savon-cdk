@@ -18,6 +18,14 @@ export interface Business {
   };
   created_at: string;
   updated_at: string;
+  
+  // Pipeline status flags
+  searched?: boolean;
+  details_fetched?: boolean;
+  reviews_fetched?: boolean;
+  photos_fetched?: boolean;
+  copy_generated?: boolean;
+  has_website?: boolean;
 }
 
 export interface Job {
@@ -52,11 +60,15 @@ export interface PaginatedResponse<T> {
   totalPages: number;
 }
 
+export type PipelineStatus = 'searched' | 'details' | 'reviews' | 'photos' | 'copy' | 'complete' | 'has_website';
+
 export interface BusinessFilters {
   search?: string;
   business_type?: string;
   state?: string;
   has_copy?: boolean | null;
+  pipeline_status?: PipelineStatus;
+  has_website?: boolean | null;
 }
 
 export interface JobFilters {

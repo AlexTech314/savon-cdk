@@ -79,6 +79,13 @@ interface BackendBusiness {
   copy_generated?: boolean;
   created_at?: string;
   updated_at?: string;
+  // Pipeline status flags
+  searched?: boolean;
+  details_fetched?: boolean;
+  reviews_fetched?: boolean;
+  photos_fetched?: boolean;
+  has_website?: boolean;
+  website_uri?: string;
   [key: string]: unknown;
 }
 
@@ -91,6 +98,7 @@ function transformBusiness(b: BackendBusiness): Business {
     city: b.city,
     state: b.state,
     phone: b.phone || '',
+    website: b.website_uri,
     friendly_slug: b.friendly_slug || '',
     rating: b.rating,
     review_count: b.rating_count,
@@ -102,6 +110,13 @@ function transformBusiness(b: BackendBusiness): Business {
       services: [],
       about: '',
     } : undefined,
+    // Pipeline status flags
+    searched: b.searched,
+    details_fetched: b.details_fetched,
+    reviews_fetched: b.reviews_fetched,
+    photos_fetched: b.photos_fetched,
+    copy_generated: b.copy_generated,
+    has_website: b.has_website,
   };
 }
 
@@ -140,6 +155,31 @@ export const getBusinesses = async (params: {
   }
   if (filters?.has_copy !== null && filters?.has_copy !== undefined) {
     filtered = filtered.filter(b => filters.has_copy ? !!b.generated_copy : !b.generated_copy);
+  }
+  // Pipeline status filtering
+  if (filters?.pipeline_status) {
+    filtered = filtered.filter(b => {
+      switch (filters.pipeline_status) {
+        case 'searched':
+          return b.searched && !b.details_fetched;
+        case 'details':
+          return b.details_fetched && !b.reviews_fetched;
+        case 'reviews':
+          return b.reviews_fetched && !b.copy_generated;
+        case 'photos':
+          return b.photos_fetched;
+        case 'copy':
+        case 'complete':
+          return b.copy_generated;
+        case 'has_website':
+          return b.has_website;
+        default:
+          return true;
+      }
+    });
+  }
+  if (filters?.has_website !== null && filters?.has_website !== undefined) {
+    filtered = filtered.filter(b => filters.has_website ? b.has_website : !b.has_website);
   }
   
   // Apply sorting
@@ -433,6 +473,87 @@ export const generateCopy = async (place_id: string): Promise<Business> => {
   return transformBusiness(response);
 };
 
+// ============================================
+// PIPELINE API (Details, Reviews, Photos)
+// ============================================
+
+export const generateDetails = async (place_id: string): Promise<Business> => {
+  // Fetch business details from Google Places API
+  const response = await apiClient<BackendBusiness>(
+    `/businesses/${encodeURIComponent(place_id)}/generate-details`,
+    {
+      method: 'POST',
+      requiresAuth: true,
+    }
+  );
+  
+  return transformBusiness(response);
+};
+
+export const generateReviews = async (place_id: string): Promise<Business> => {
+  // Fetch reviews from Google Places API
+  const response = await apiClient<BackendBusiness>(
+    `/businesses/${encodeURIComponent(place_id)}/generate-reviews`,
+    {
+      method: 'POST',
+      requiresAuth: true,
+    }
+  );
+  
+  return transformBusiness(response);
+};
+
+export const generatePhotos = async (place_id: string): Promise<Business> => {
+  // Fetch photos from Google Places API
+  const response = await apiClient<BackendBusiness>(
+    `/businesses/${encodeURIComponent(place_id)}/generate-photos`,
+    {
+      method: 'POST',
+      requiresAuth: true,
+    }
+  );
+  
+  return transformBusiness(response);
+};
+
+/**
+ * Run the full pipeline for a business:
+ * 1. Fetch details (if not already done)
+ * 2. Fetch reviews (if not already done)
+ * 3. Generate copy
+ * 
+ * Returns the updated business after each step.
+ */
+export const generateFullPipeline = async (
+  place_id: string,
+  onProgress?: (step: string, business: Business) => void
+): Promise<Business> => {
+  let business: Business;
+  
+  // Step 1: Get details if not already fetched
+  onProgress?.('Fetching details...', { place_id } as Business);
+  business = await generateDetails(place_id);
+  onProgress?.('Details fetched', business);
+  
+  // If business has a website, we might want to skip copy generation
+  if (business.has_website) {
+    onProgress?.('Business has website - skipping copy', business);
+    return business;
+  }
+  
+  // Step 2: Get reviews if not already fetched
+  onProgress?.('Fetching reviews...', business);
+  business = await generateReviews(place_id);
+  onProgress?.('Reviews fetched', business);
+  
+  // Step 3: Generate copy
+  onProgress?.('Generating copy...', business);
+  business = await generateCopy(place_id);
+  onProgress?.('Copy generated', business);
+  
+  return business;
+};
+
 export const generateCopyBulk = async (place_ids: string[]): Promise<number> => {
   // Generate previews for multiple businesses
   // This would trigger a background job or sequential generation
@@ -494,17 +615,16 @@ export const generateCopyBulkWithRules = async (
     });
   }
 
-  // Only generate for businesses without existing copy
-  const toGenerate = filtered.filter(b => !b.generated_copy);
+  // Only generate for businesses without existing copy and without websites
+  const toGenerate = filtered.filter(b => !b.generated_copy && !b.has_website);
   
-  // Generate previews (this runs in background, we just kick it off)
-  // For now, we'll generate them sequentially in the background
+  // Generate previews using full pipeline (this runs in background)
   const generatePromise = (async () => {
     for (const business of toGenerate) {
       try {
-        await generateCopy(business.place_id);
+        await generateFullPipeline(business.place_id);
       } catch (e) {
-        console.error(`Failed to generate preview for ${business.place_id}:`, e);
+        console.error(`Failed to generate pipeline for ${business.place_id}:`, e);
       }
     }
   })();

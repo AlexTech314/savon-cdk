@@ -7,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { BusinessFilters } from '@/lib/types';
+import { BusinessFilters, PipelineStatus } from '@/lib/types';
 import { Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -21,13 +21,21 @@ interface BusinessFiltersComponentProps {
 const businessTypes = ['Plumber', 'HVAC Contractor', 'Electrician'];
 const states = ['CA', 'TX', 'FL', 'NY', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI'];
 
+const pipelineStatuses: { value: PipelineStatus; label: string }[] = [
+  { value: 'searched', label: 'Searched (needs details)' },
+  { value: 'details', label: 'Has Details (needs reviews)' },
+  { value: 'reviews', label: 'Has Reviews (needs copy)' },
+  { value: 'complete', label: 'Complete' },
+  { value: 'has_website', label: 'Has Website' },
+];
+
 export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> = ({
   search,
   onSearchChange,
   filters,
   onFiltersChange,
 }) => {
-  const hasActiveFilters = search || filters.business_type || filters.state || filters.has_copy !== undefined;
+  const hasActiveFilters = search || filters.business_type || filters.state || filters.has_copy !== undefined || filters.pipeline_status;
 
   const clearFilters = () => {
     onSearchChange('');
@@ -93,29 +101,26 @@ export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> =
         </SelectContent>
       </Select>
 
-      {/* Has Copy filter */}
+      {/* Pipeline Status filter */}
       <Select
-        value={
-          filters.has_copy === undefined
-            ? 'all'
-            : filters.has_copy
-            ? 'yes'
-            : 'no'
-        }
+        value={filters.pipeline_status || 'all'}
         onValueChange={(value) =>
           onFiltersChange({
             ...filters,
-            has_copy: value === 'all' ? undefined : value === 'yes',
+            pipeline_status: value === 'all' ? undefined : value as PipelineStatus,
           })
         }
       >
-        <SelectTrigger className="w-full sm:w-36">
-          <SelectValue placeholder="Has Copy" />
+        <SelectTrigger className="w-full sm:w-48">
+          <SelectValue placeholder="Pipeline Status" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All</SelectItem>
-          <SelectItem value="yes">Has Copy</SelectItem>
-          <SelectItem value="no">Missing Copy</SelectItem>
+          <SelectItem value="all">All Pipeline Status</SelectItem>
+          {pipelineStatuses.map((status) => (
+            <SelectItem key={status.value} value={status.value}>
+              {status.label}
+            </SelectItem>
+          ))}
         </SelectContent>
       </Select>
 

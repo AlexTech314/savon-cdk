@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Megaphone,
+  DollarSign,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import savonLogo from '@/assets/savon-logo.png';
@@ -26,6 +27,7 @@ const navItems = [
   { path: '/businesses', label: 'Businesses', icon: Building2, exact: true },
   { path: '/businesses/import', label: 'Import/Export', icon: Upload, exact: true },
   { path: '/jobs', label: 'Jobs', icon: Briefcase, exact: false },
+  { path: '/settings/pricing', label: 'Pricing', icon: DollarSign, exact: true },
   { path: '/settings', label: 'Settings', icon: Settings, exact: false },
 ];
 

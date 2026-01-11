@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Sparkles, Plus, X, AlertTriangle } from 'lucide-react';
+import { Sparkles, Plus, X, AlertTriangle, DollarSign, Info } from 'lucide-react';
+import { estimatePipelineCost, formatCost, PRICING } from '@/lib/pricing';
 
 export interface FilterRule {
   field: string;
@@ -35,14 +36,19 @@ interface GeneratePreviewsModalProps {
 }
 
 const FILTERABLE_FIELDS = [
-  { value: 'email', label: 'Email' },
+  // Pipeline status fields
+  { value: 'searched', label: 'Searched' },
+  { value: 'details_fetched', label: 'Details Fetched' },
+  { value: 'reviews_fetched', label: 'Reviews Fetched' },
+  { value: 'photos_fetched', label: 'Photos Fetched' },
+  { value: 'copy_generated', label: 'Copy Generated' },
+  { value: 'has_website', label: 'Has Website' },
+  // Business fields
   { value: 'city', label: 'City' },
   { value: 'state', label: 'State' },
   { value: 'business_type', label: 'Business Type' },
   { value: 'phone', label: 'Phone' },
-  { value: 'website', label: 'Website' },
   { value: 'rating', label: 'Rating' },
-  { value: 'generated_copy', label: 'Generated Copy' },
 ];
 
 const OPERATORS = [
@@ -62,7 +68,7 @@ export const GeneratePreviewsModal: React.FC<GeneratePreviewsModalProps> = ({
   const [rules, setRules] = useState<FilterRule[]>([]);
 
   const addRule = () => {
-    setRules([...rules, { field: 'email', operator: 'EXISTS' }]);
+    setRules([...rules, { field: 'copy_generated', operator: 'NOT_EXISTS' }]);
   };
 
   const removeRule = (index: number) => {
@@ -96,6 +102,11 @@ export const GeneratePreviewsModal: React.FC<GeneratePreviewsModalProps> = ({
 
   const canGenerate = mode === 'all' || (mode === 'filtered' && rules.length > 0);
 
+  // Calculate estimated cost
+  const estimatedCount = mode === 'all' ? totalBusinesses : Math.min(totalBusinesses, 100); // Estimate for filtered
+  const costEstimate = useMemo(() => estimatePipelineCost(estimatedCount), [estimatedCount]);
+  const perBusinessCost = useMemo(() => estimatePipelineCost(1), []);
+
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className="max-w-lg">
@@ -105,7 +116,7 @@ export const GeneratePreviewsModal: React.FC<GeneratePreviewsModalProps> = ({
             Generate Previews
           </DialogTitle>
           <DialogDescription>
-            Generate AI previews for businesses. This may take a while for large batches.
+            Run the full pipeline (details → reviews → copy) for businesses. Businesses with websites will be skipped.
           </DialogDescription>
         </DialogHeader>
 
@@ -237,6 +248,64 @@ export const GeneratePreviewsModal: React.FC<GeneratePreviewsModalProps> = ({
             </div>
           )}
 
+          {/* Pipeline info */}
+          <div className="flex items-start gap-2 p-3 rounded-lg border border-border bg-muted/30">
+            <Sparkles className="h-4 w-4 text-primary mt-0.5" />
+            <div className="text-sm">
+              <p className="font-medium">Full Pipeline</p>
+              <p className="text-muted-foreground">
+                For each business: Fetch details → Fetch reviews → Generate copy
+              </p>
+            </div>
+          </div>
+
+          {/* Cost estimate */}
+          <div className="p-3 rounded-lg border border-primary/30 bg-primary/5">
+            <div className="flex items-center gap-2 mb-2">
+              <DollarSign className="h-4 w-4 text-primary" />
+              <span className="font-medium text-sm">Estimated Cost</span>
+            </div>
+            <div className="space-y-1 text-sm">
+              {mode === 'all' ? (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">
+                      {totalBusinesses.toLocaleString()} businesses × {perBusinessCost.formatted}
+                    </span>
+                    <span className="font-mono font-medium">{costEstimate.formatted}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
+                    {perBusinessCost.formattedBreakdown.map((line, i) => (
+                      <div key={i}>{line}</div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Per business</span>
+                    <span className="font-mono font-medium">{perBusinessCost.formatted}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
+                    {perBusinessCost.formattedBreakdown.map((line, i) => (
+                      <div key={i}>{line}</div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground pt-1">
+                    Total cost depends on how many businesses match your filter rules.
+                  </p>
+                </>
+              )}
+            </div>
+            <div className="flex items-start gap-1 mt-2 pt-2 border-t border-border/50 text-[10px] text-muted-foreground">
+              <Info className="h-3 w-3 mt-0.5 shrink-0" />
+              <span>
+                Estimates based on Google API and Anthropic pricing. 
+                See <a href="/settings/pricing" className="underline hover:text-primary">Pricing</a> for details.
+              </span>
+            </div>
+          </div>
+
           {/* Warning for large batches */}
           {mode === 'all' && totalBusinesses > 100 && (
             <div className="flex items-start gap-2 p-3 rounded-lg border border-yellow-500/50 bg-yellow-500/10">
@@ -244,7 +313,7 @@ export const GeneratePreviewsModal: React.FC<GeneratePreviewsModalProps> = ({
               <div className="text-sm">
                 <p className="font-medium text-yellow-500">Large Batch Warning</p>
                 <p className="text-muted-foreground">
-                  Generating previews for {totalBusinesses.toLocaleString()} businesses will take time and incur API costs.
+                  Running pipeline for {totalBusinesses.toLocaleString()} businesses will take significant time and incur approximately {costEstimate.formatted} in API costs.
                 </p>
               </div>
             </div>
@@ -258,6 +327,9 @@ export const GeneratePreviewsModal: React.FC<GeneratePreviewsModalProps> = ({
           <Button onClick={handleGenerate} disabled={!canGenerate}>
             <Sparkles className="h-4 w-4 mr-2" />
             Generate Previews
+            {mode === 'all' && (
+              <span className="ml-1 text-xs opacity-75">({costEstimate.formatted})</span>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
