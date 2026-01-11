@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getCampaign, createCampaign, updateCampaign, deleteCampaign, runCampaign } from '@/lib/api';
+import { getCampaign, createCampaign, updateCampaign, deleteCampaign, runCampaign, uploadSearchesToS3, confirmSearchesUpload } from '@/lib/api';
 import { Campaign, CampaignInput, PLACE_TYPES, SearchQuery, DataTier, DATA_TIERS } from '@/types/jobs';
 import { GenerateQueriesModal } from '@/components/campaigns/GenerateQueriesModal';
 import { estimateCampaignCost } from '@/lib/pricing';
@@ -87,7 +87,7 @@ const CampaignDetailPage: React.FC = () => {
     if (campaign) {
       setName(campaign.name);
       setDescription(campaign.description || '');
-      setSearches(campaign.searches);
+      setSearches(campaign.searches || [{ textQuery: '', includedType: '' }]);
       setMaxResultsPerSearch(campaign.max_results_per_search);
       setDataTier(campaign.data_tier || 'enterprise');
       setIsEditing(true);
@@ -111,7 +111,18 @@ const CampaignDetailPage: React.FC = () => {
 
   // Mutations
   const createMutation = useMutation({
-    mutationFn: (input: CampaignInput) => createCampaign(input),
+    mutationFn: async (data: { input: CampaignInput; searches: SearchQuery[] }) => {
+      // Step 1: Create campaign and get presigned URL
+      const { campaign: newCampaign, uploadUrl } = await createCampaign(data.input);
+      
+      // Step 2: Upload searches to S3
+      await uploadSearchesToS3(uploadUrl, data.searches);
+      
+      // Step 3: Confirm upload
+      const confirmedCampaign = await confirmSearchesUpload(newCampaign.campaign_id, data.searches.length);
+      
+      return confirmedCampaign;
+    },
     onSuccess: (newCampaign) => {
       toast({
         title: 'Campaign Created',
@@ -121,7 +132,8 @@ const CampaignDetailPage: React.FC = () => {
       // Navigate to the new campaign's detail page
       navigate(`/campaigns/${newCampaign.campaign_id}`, { replace: true });
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Create campaign error:', error);
       toast({
         title: 'Error',
         description: 'Failed to create campaign.',
@@ -131,7 +143,24 @@ const CampaignDetailPage: React.FC = () => {
   });
 
   const updateMutation = useMutation({
-    mutationFn: (input: CampaignInput) => updateCampaign(campaign_id!, input),
+    mutationFn: async (data: { input: CampaignInput; searches: SearchQuery[] }) => {
+      // Step 1: Update campaign and request upload URL
+      const { campaign: updatedCampaign, uploadUrl } = await updateCampaign(campaign_id!, {
+        ...data.input,
+        updateSearches: true,
+      });
+      
+      // Step 2: Upload new searches to S3
+      if (uploadUrl) {
+        await uploadSearchesToS3(uploadUrl, data.searches);
+        
+        // Step 3: Confirm upload
+        const confirmedCampaign = await confirmSearchesUpload(updatedCampaign.campaign_id, data.searches.length);
+        return confirmedCampaign;
+      }
+      
+      return updatedCampaign;
+    },
     onSuccess: () => {
       toast({
         title: 'Campaign Updated',
@@ -141,7 +170,8 @@ const CampaignDetailPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       setIsEditing(false);
     },
-    onError: () => {
+    onError: (error) => {
+      console.error('Update campaign error:', error);
       toast({
         title: 'Error',
         description: 'Failed to update campaign.',
@@ -241,22 +271,23 @@ const CampaignDetailPage: React.FC = () => {
       return;
     }
 
+    const searchesToUpload = validSearches.map(s => ({
+      textQuery: s.textQuery.trim(),
+      includedType: s.includedType || undefined,
+    }));
+
     const input: CampaignInput = {
       name: name.trim(),
       description: description.trim() || undefined,
-      searches: validSearches.map(s => ({
-        textQuery: s.textQuery.trim(),
-        includedType: s.includedType || undefined,
-      })),
       maxResultsPerSearch,
       onlyWithoutWebsite: false,
       dataTier,
     };
 
     if (isNewCampaign) {
-      createMutation.mutate(input);
+      createMutation.mutate({ input, searches: searchesToUpload });
     } else {
-      updateMutation.mutate(input);
+      updateMutation.mutate({ input, searches: searchesToUpload });
     }
   };
 
@@ -297,7 +328,7 @@ const CampaignDetailPage: React.FC = () => {
     : DATA_TIERS.find(t => t.value === dataTier);
   
   const costEstimate = campaign
-    ? estimateCampaignCost(campaign.searches.length, campaign.max_results_per_search, campaign.data_tier)
+    ? estimateCampaignCost(campaign.searches_count, campaign.max_results_per_search, campaign.data_tier)
     : estimateCampaignCost(searches.filter(s => s.textQuery.trim()).length, maxResultsPerSearch, dataTier);
 
   return (
@@ -637,28 +668,36 @@ const CampaignDetailPage: React.FC = () => {
                     <Search className="h-5 w-5 text-primary" />
                     Search Queries
                     <Badge variant="secondary" className="ml-auto">
-                      {campaign.searches.length} queries
+                      {campaign.searches_count} queries
                     </Badge>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="h-64 rounded border border-border bg-muted/30 p-3">
-                    <div className="space-y-2">
-                      {campaign.searches.map((search, index) => (
-                        <div key={index} className="flex items-center gap-3 text-sm py-1">
-                          <span className="text-muted-foreground w-8 text-right shrink-0">
-                            {index + 1}.
-                          </span>
-                          <span className="flex-1">{search.textQuery}</span>
-                          {search.includedType && (
-                            <Badge variant="outline" className="shrink-0">
-                              {PLACE_TYPES.find(t => t.value === search.includedType)?.label || search.includedType}
-                            </Badge>
-                          )}
-                        </div>
-                      ))}
+                  {campaign.searches && campaign.searches.length > 0 ? (
+                    <ScrollArea className="h-64 rounded border border-border bg-muted/30 p-3">
+                      <div className="space-y-2">
+                        {campaign.searches.map((search, index) => (
+                          <div key={index} className="flex items-center gap-3 text-sm py-1">
+                            <span className="text-muted-foreground w-8 text-right shrink-0">
+                              {index + 1}.
+                            </span>
+                            <span className="flex-1">{search.textQuery}</span>
+                            {search.includedType && (
+                              <Badge variant="outline" className="shrink-0">
+                                {PLACE_TYPES.find(t => t.value === search.includedType)?.label || search.includedType}
+                              </Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <div className="h-64 rounded border border-border bg-muted/30 p-3 flex items-center justify-center">
+                      <p className="text-muted-foreground text-sm">
+                        {campaign.searches_count} search queries configured
+                      </p>
                     </div>
-                  </ScrollArea>
+                  )}
                 </CardContent>
               </Card>
 
@@ -709,7 +748,7 @@ const CampaignDetailPage: React.FC = () => {
                   <p className="text-2xl font-bold">
                     {isNewCampaign 
                       ? searches.filter(s => s.textQuery.trim()).length 
-                      : campaign?.searches.length || 0}
+                      : campaign?.searches_count || 0}
                   </p>
                   <p className="text-xs text-muted-foreground">Search Queries</p>
                 </div>

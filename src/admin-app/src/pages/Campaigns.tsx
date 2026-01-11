@@ -188,7 +188,7 @@ const Campaigns: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary">
-                        {campaign.searches.length} queries
+                        {campaign.searches_count} queries
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -199,7 +199,7 @@ const Campaigns: React.FC = () => {
                     <TableCell>
                       <span className="text-sm font-medium text-primary">
                         {estimateCampaignCost(
-                          campaign.searches.length,
+                          campaign.searches_count,
                           campaign.max_results_per_search,
                           campaign.data_tier
                         ).formatted}

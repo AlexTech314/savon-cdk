@@ -725,9 +725,11 @@ interface BackendCampaign {
   campaign_id: string;
   name: string;
   description?: string;
-  searches: { textQuery: string; includedType?: string }[];
+  searches?: { textQuery: string; includedType?: string }[];  // Only present when fetched individually
+  searches_count: number;  // Always present
   max_results_per_search: number;
   only_without_website: boolean;
+  data_tier?: 'pro' | 'enterprise' | 'enterprise_atmosphere';
   created_at: string;
   updated_at: string;
   last_run_at?: string;
@@ -739,8 +741,10 @@ function transformCampaign(c: BackendCampaign): Campaign {
     name: c.name,
     description: c.description,
     searches: c.searches,
+    searches_count: c.searches_count || c.searches?.length || 0,
     max_results_per_search: c.max_results_per_search,
     only_without_website: c.only_without_website,
+    data_tier: c.data_tier || 'enterprise',
     created_at: c.created_at,
     updated_at: c.updated_at,
     last_run_at: c.last_run_at,
@@ -768,8 +772,22 @@ export const getCampaign = async (campaignId: string): Promise<Campaign | null> 
   }
 };
 
-export const createCampaign = async (input: CampaignInput): Promise<Campaign> => {
-  const response = await apiClient<{ campaign: BackendCampaign }>(
+export interface CreateCampaignResult {
+  campaign: Campaign;
+  uploadUrl: string;
+}
+
+export interface UpdateCampaignResult {
+  campaign: Campaign;
+  uploadUrl?: string;
+}
+
+/**
+ * Create a new campaign. Returns the campaign and a presigned URL for uploading searches.
+ * After creating, upload searches to the URL, then call confirmSearchesUpload.
+ */
+export const createCampaign = async (input: CampaignInput): Promise<CreateCampaignResult> => {
+  const response = await apiClient<{ campaign: BackendCampaign; uploadUrl: string }>(
     '/campaigns',
     {
       method: 'POST',
@@ -777,12 +795,21 @@ export const createCampaign = async (input: CampaignInput): Promise<Campaign> =>
       requiresAuth: true,
     }
   );
-  
-  return transformCampaign(response.campaign);
+
+  return {
+    campaign: transformCampaign(response.campaign),
+    uploadUrl: response.uploadUrl,
+  };
 };
 
-export const updateCampaign = async (campaignId: string, input: Partial<CampaignInput>): Promise<Campaign> => {
-  const response = await apiClient<{ campaign: BackendCampaign }>(
+/**
+ * Update campaign metadata. If updateSearches is true, returns a presigned URL.
+ */
+export const updateCampaign = async (
+  campaignId: string, 
+  input: Partial<CampaignInput> & { updateSearches?: boolean }
+): Promise<UpdateCampaignResult> => {
+  const response = await apiClient<{ campaign: BackendCampaign; uploadUrl?: string }>(
     `/campaigns/${encodeURIComponent(campaignId)}`,
     {
       method: 'PUT',
@@ -790,7 +817,55 @@ export const updateCampaign = async (campaignId: string, input: Partial<Campaign
       requiresAuth: true,
     }
   );
-  
+
+  return {
+    campaign: transformCampaign(response.campaign),
+    uploadUrl: response.uploadUrl,
+  };
+};
+
+/**
+ * Upload searches to S3 using the presigned URL
+ */
+export const uploadSearchesToS3 = async (
+  uploadUrl: string, 
+  searches: { textQuery: string; includedType?: string }[]
+): Promise<void> => {
+  const payload = {
+    searches,
+    count: searches.length,
+    uploadedAt: new Date().toISOString(),
+  };
+
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to upload searches: ${response.status}`);
+  }
+};
+
+/**
+ * Confirm that searches have been uploaded to S3
+ */
+export const confirmSearchesUpload = async (
+  campaignId: string, 
+  searchesCount: number
+): Promise<Campaign> => {
+  const response = await apiClient<{ campaign: BackendCampaign }>(
+    `/campaigns/${encodeURIComponent(campaignId)}/confirm-upload`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ searchesCount }),
+      requiresAuth: true,
+    }
+  );
+
   return transformCampaign(response.campaign);
 };
 

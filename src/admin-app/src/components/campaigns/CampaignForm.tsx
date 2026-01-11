@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { createCampaign, updateCampaign } from '@/lib/api';
+import { createCampaign, updateCampaign, uploadSearchesToS3, confirmSearchesUpload } from '@/lib/api';
 import { Campaign, CampaignInput, PLACE_TYPES, SearchQuery, DataTier, DATA_TIERS } from '@/types/jobs';
 import { GenerateQueriesModal } from './GenerateQueriesModal';
 import { Input } from '@/components/ui/input';
@@ -42,7 +42,9 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
   const [name, setName] = useState(campaign?.name || '');
   const [description, setDescription] = useState(campaign?.description || '');
   const [searches, setSearches] = useState<SearchQuery[]>(
-    campaign?.searches || [{ textQuery: '', includedType: '' }]
+    campaign?.searches && campaign.searches.length > 0 
+      ? campaign.searches 
+      : [{ textQuery: '', includedType: '' }]
   );
   const [maxResultsPerSearch, setMaxResultsPerSearch] = useState(
     campaign?.max_results_per_search ?? 60
@@ -64,7 +66,18 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
   }, []);
 
   const createMutation = useMutation({
-    mutationFn: (input: CampaignInput) => createCampaign(input),
+    mutationFn: async (data: { input: CampaignInput; searches: SearchQuery[] }) => {
+      // Step 1: Create campaign and get presigned URL
+      const { campaign: newCampaign, uploadUrl } = await createCampaign(data.input);
+      
+      // Step 2: Upload searches to S3
+      await uploadSearchesToS3(uploadUrl, data.searches);
+      
+      // Step 3: Confirm upload
+      await confirmSearchesUpload(newCampaign.campaign_id, data.searches.length);
+      
+      return newCampaign;
+    },
     onSuccess: () => {
       toast({
         title: 'Campaign Created',
@@ -82,7 +95,21 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
   });
 
   const updateMutation = useMutation({
-    mutationFn: (input: CampaignInput) => updateCampaign(campaign!.campaign_id, input),
+    mutationFn: async (data: { input: CampaignInput; searches: SearchQuery[] }) => {
+      // Step 1: Update campaign and request upload URL
+      const { campaign: updatedCampaign, uploadUrl } = await updateCampaign(campaign!.campaign_id, {
+        ...data.input,
+        updateSearches: true,
+      });
+      
+      // Step 2: Upload new searches to S3
+      if (uploadUrl) {
+        await uploadSearchesToS3(uploadUrl, data.searches);
+        await confirmSearchesUpload(updatedCampaign.campaign_id, data.searches.length);
+      }
+      
+      return updatedCampaign;
+    },
     onSuccess: () => {
       toast({
         title: 'Campaign Updated',
@@ -151,22 +178,23 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
       return;
     }
 
+    const searchesToUpload = validSearches.map(s => ({
+      textQuery: s.textQuery.trim(),
+      includedType: s.includedType || undefined,
+    }));
+
     const input: CampaignInput = {
       name: name.trim(),
       description: description.trim() || undefined,
-      searches: validSearches.map(s => ({
-        textQuery: s.textQuery.trim(),
-        includedType: s.includedType || undefined,
-      })),
       maxResultsPerSearch,
       onlyWithoutWebsite: false, // Website filtering not available in search results
       dataTier,
     };
 
     if (isEditing) {
-      updateMutation.mutate(input);
+      updateMutation.mutate({ input, searches: searchesToUpload });
     } else {
-      createMutation.mutate(input);
+      createMutation.mutate({ input, searches: searchesToUpload });
     }
   };
 

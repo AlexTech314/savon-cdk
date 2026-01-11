@@ -105,11 +105,13 @@ export interface CopyConfig {
 }
 
 // Campaign = saved search configuration for finding leads
+// Note: searches are stored in S3 and only included when fetching a single campaign
 export interface Campaign {
   campaign_id: string;
   name: string;
   description?: string;
-  searches: SearchQuery[];
+  searches?: SearchQuery[];      // Only present when fetching single campaign (from S3)
+  searches_count: number;        // Always present - count for display
   max_results_per_search: number;
   only_without_website: boolean;
   data_tier: DataTier;
@@ -118,14 +120,36 @@ export interface Campaign {
   last_run_at?: string;
 }
 
-// Input for creating/updating campaigns
+// API response for create/update includes upload URL
+export interface CampaignCreateResponse {
+  campaign: Campaign;
+  uploadUrl: string;
+  message?: string;
+}
+
+export interface CampaignUpdateResponse {
+  campaign: Campaign;
+  uploadUrl?: string;  // Only present if updateSearches was requested
+  message?: string;
+}
+
+// Input for creating campaigns (searches uploaded separately via presigned URL)
 export interface CampaignInput {
   name: string;
   description?: string;
-  searches: SearchQuery[];
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
   dataTier?: DataTier;
+}
+
+// Input for updating campaigns
+export interface CampaignUpdateInput {
+  name?: string;
+  description?: string;
+  maxResultsPerSearch?: number;
+  onlyWithoutWebsite?: boolean;
+  dataTier?: DataTier;
+  updateSearches?: boolean;  // If true, response includes presigned URL
 }
 
 export interface Job {
