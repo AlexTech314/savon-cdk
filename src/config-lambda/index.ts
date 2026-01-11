@@ -746,6 +746,17 @@ async function generateCopy(placeId: string): Promise<APIGatewayProxyResultV2> {
   }
   
   const business = result.Item as Business;
+  const businessRecord = business as Record<string, unknown>;
+  
+  // SMART: Skip if copy already generated
+  if (businessRecord.copy_generated === true) {
+    console.log(`Copy already generated for: ${business.business_name} - skipping LLM call`);
+    return response(200, { 
+      ...business, 
+      skipped: true, 
+      reason: 'Copy already generated' 
+    });
+  }
   
   console.log(`Generating copy for: ${business.business_name}`);
   
@@ -877,6 +888,7 @@ function buildPhotoUrl(photoName: string, maxWidth = 800): string {
 /**
  * POST /businesses/{place_id}/generate-details
  * Fetches business details from Google Places API (Enterprise tier: $20/1000)
+ * SMART: Skips if details are already fetched (no double-dipping)
  */
 async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2> {
   if (!GOOGLE_API_KEY) {
@@ -896,6 +908,18 @@ async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2
   }
 
   const business = result.Item as Business;
+  const businessRecord = business as Record<string, unknown>;
+  
+  // SMART: Skip if details already fetched (from tiered search or previous call)
+  if (businessRecord.details_fetched === true) {
+    console.log(`Details already fetched for: ${business.business_name} - skipping API call`);
+    return response(200, { 
+      ...business, 
+      skipped: true, 
+      reason: 'Details already fetched' 
+    });
+  }
+  
   console.log(`Fetching details for: ${business.business_name}`);
 
   // Call Google Places API
@@ -995,6 +1019,7 @@ async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2
 /**
  * POST /businesses/{place_id}/generate-reviews
  * Fetches reviews from Google Places API (Enterprise+Atmosphere tier: $25/1000)
+ * SMART: Skips if reviews are already fetched (no double-dipping)
  */
 async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2> {
   if (!GOOGLE_API_KEY) {
@@ -1014,6 +1039,18 @@ async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2
   }
 
   const business = result.Item as Business;
+  const businessRecord = business as Record<string, unknown>;
+  
+  // SMART: Skip if reviews already fetched (from tiered search or previous call)
+  if (businessRecord.reviews_fetched === true) {
+    console.log(`Reviews already fetched for: ${business.business_name} - skipping API call`);
+    return response(200, { 
+      ...business, 
+      skipped: true, 
+      reason: 'Reviews already fetched' 
+    });
+  }
+  
   console.log(`Fetching reviews for: ${business.business_name}`);
 
   // Call Google Places API
@@ -1091,6 +1128,7 @@ async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2
 /**
  * POST /businesses/{place_id}/generate-photos
  * Fetches photos from Google Places API ($7/1000)
+ * SMART: Skips if photos are already fetched (no double-dipping)
  */
 async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2> {
   if (!GOOGLE_API_KEY) {
@@ -1110,6 +1148,18 @@ async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2>
   }
 
   const business = result.Item as Business;
+  const businessRecord = business as Record<string, unknown>;
+  
+  // SMART: Skip if photos already fetched
+  if (businessRecord.photos_fetched === true) {
+    console.log(`Photos already fetched for: ${business.business_name} - skipping API call`);
+    return response(200, { 
+      ...business, 
+      skipped: true, 
+      reason: 'Photos already fetched' 
+    });
+  }
+  
   console.log(`Fetching photos for: ${business.business_name}`);
 
   // Call Google Places API
@@ -1278,6 +1328,7 @@ async function getPreview(placeIdOrSlug: string): Promise<APIGatewayProxyResultV
 /**
  * Internal version of generateDetails for on-demand preview
  * Returns void, updates DynamoDB directly
+ * SMART: Skips if details already fetched
  */
 async function fetchDetailsInternal(placeId: string): Promise<void> {
   if (!GOOGLE_API_KEY) {
@@ -1291,6 +1342,13 @@ async function fetchDetailsInternal(placeId: string): Promise<void> {
   
   if (!result.Item) return;
   const business = result.Item as Business;
+  const businessRecord = business as Record<string, unknown>;
+  
+  // SMART: Skip if already fetched (from tiered search)
+  if (businessRecord.details_fetched === true) {
+    console.log(`[Internal] Details already fetched for: ${business.business_name} - skipping`);
+    return;
+  }
 
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   const fieldMask = [
@@ -1364,10 +1422,26 @@ async function fetchDetailsInternal(placeId: string): Promise<void> {
 /**
  * Internal version of generateReviews for on-demand preview
  * Returns void, updates DynamoDB directly
+ * SMART: Skips if reviews already fetched
  */
 async function fetchReviewsInternal(placeId: string): Promise<void> {
   if (!GOOGLE_API_KEY) {
     throw new Error('Google API key not configured');
+  }
+
+  // Check if already fetched
+  const checkResult = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+  
+  if (!checkResult.Item) return;
+  const businessRecord = checkResult.Item as Record<string, unknown>;
+  
+  // SMART: Skip if already fetched (from tiered search)
+  if (businessRecord.reviews_fetched === true) {
+    console.log(`[Internal] Reviews already fetched for: ${businessRecord.business_name} - skipping`);
+    return;
   }
 
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
@@ -1430,6 +1504,7 @@ async function fetchReviewsInternal(placeId: string): Promise<void> {
 /**
  * Internal version of generateCopy for on-demand preview
  * Returns void, updates DynamoDB directly
+ * SMART: Skips if copy already generated
  */
 async function generateCopyInternal(placeId: string): Promise<void> {
   if (!CLAUDE_API_KEY) {
@@ -1443,6 +1518,13 @@ async function generateCopyInternal(placeId: string): Promise<void> {
   
   if (!result.Item) return;
   const business = result.Item as Business;
+  const businessRecord = business as Record<string, unknown>;
+  
+  // SMART: Skip if already generated
+  if (businessRecord.copy_generated === true) {
+    console.log(`[Internal] Copy already generated for: ${business.business_name} - skipping`);
+    return;
+  }
 
   const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY });
 
