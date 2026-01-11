@@ -103,6 +103,20 @@ export class AppStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       removalPolicy: cdk.RemovalPolicy.RETAIN, // Keep data on stack deletion
       versioned: true, // Enable versioning for safety
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.GET],
+          allowedOrigins: [
+            'https://admin-alpha.savondesigns.com',
+            'https://admin.savondesigns.com',
+            'http://localhost:5173', // Local dev
+            'http://localhost:3000', // Local dev alternate
+          ],
+          allowedHeaders: ['*'],
+          exposedHeaders: ['ETag'],
+          maxAge: 3600,
+        },
+      ],
     });
 
     // ============================================================
