@@ -95,7 +95,7 @@ interface SearchResponse {
 async function searchPlaces(query: string, options?: SearchOptions): Promise<PlaceBasic[]> {
   const allPlaces: PlaceBasic[] = [];
   let pageToken: string | undefined;
-  const maxResults = options?.maxResults ?? 500;
+  const maxResults = Math.min(options?.maxResults ?? 60, 60); // Google API limit is 60 per query
   
   // Minimal fields for cheaper API tier (Essentials vs Pro)
   const fieldMask = 'places.id,places.displayName,places.websiteUri';

@@ -128,7 +128,7 @@ async function createCampaign(body?: string): Promise<APIGatewayProxyResultV2> {
     name: input.name.trim(),
     description: input.description?.trim(),
     searches: input.searches,
-    max_results_per_search: input.maxResultsPerSearch ?? 500,
+    max_results_per_search: Math.min(input.maxResultsPerSearch ?? 60, 60), // Google API limit
     only_without_website: input.onlyWithoutWebsite ?? true,
     created_at: now,
     updated_at: now,

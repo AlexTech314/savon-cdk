@@ -40,7 +40,7 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
     campaign?.searches || [{ textQuery: '', includedType: '' }]
   );
   const [maxResultsPerSearch, setMaxResultsPerSearch] = useState(
-    campaign?.max_results_per_search ?? 500
+    campaign?.max_results_per_search ?? 60
   );
   const [onlyWithoutWebsite, setOnlyWithoutWebsite] = useState(
     campaign?.only_without_website ?? true
@@ -245,13 +245,13 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
             id="maxResults"
             type="number"
             min={1}
-            max={500}
+            max={60}
             value={maxResultsPerSearch}
-            onChange={(e) => setMaxResultsPerSearch(Math.min(500, Math.max(1, Number(e.target.value))))}
+            onChange={(e) => setMaxResultsPerSearch(Math.min(60, Math.max(1, Number(e.target.value))))}
             className="w-32"
           />
           <p className="text-xs text-muted-foreground">
-            1-500 (uses pagination)
+            1-60 (Google API limit per query)
           </p>
         </div>
 
