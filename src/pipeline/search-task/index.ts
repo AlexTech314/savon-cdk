@@ -86,7 +86,8 @@ async function searchPlaces(query: string, options?: { includedType?: string; ma
   const maxResults = Math.min(options?.maxResults ?? 60, 60); // Google API limit is 60 per query
   
   // Pro tier fields only - NO websiteUri (that's Enterprise tier)
-  const fieldMask = 'places.id,places.displayName,places.primaryType';
+  // MUST include nextPageToken for pagination to work!
+  const fieldMask = 'places.id,places.displayName,places.primaryType,nextPageToken';
   const url = 'https://places.googleapis.com/v1/places:searchText';
 
   do {
@@ -126,13 +127,16 @@ async function searchPlaces(query: string, options?: { includedType?: string; ma
     allPlaces.push(...(data.places || []));
     pageToken = data.nextPageToken;
     
-    console.log(`    Page fetched: ${data.places?.length || 0} results (total: ${allPlaces.length})`);
+    console.log(`    Page fetched: ${data.places?.length || 0} results (total: ${allPlaces.length})${pageToken ? ' [has nextPageToken]' : ' [no more pages]'}`);
     
-    // Wait for token validity before next page
+    // Wait for token validity before next page (Google requires ~2s between paginated requests)
     if (pageToken && allPlaces.length < maxResults) {
+      console.log(`    Fetching next page (target: ${maxResults})...`);
       await new Promise(r => setTimeout(r, 2000));
     }
   } while (pageToken && allPlaces.length < maxResults);
+  
+  console.log(`    Search complete: ${allPlaces.length} total results`);
   
   return allPlaces.slice(0, maxResults);
 }

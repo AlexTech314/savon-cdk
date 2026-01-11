@@ -408,7 +408,7 @@ export class AppStack extends cdk.Stack {
       code: lambda.DockerImageCode.fromImageAsset(
         path.join(__dirname, '../../src/config-lambda')
       ),
-      timeout: cdk.Duration.seconds(60), // Increased for LLM and API calls
+      timeout: cdk.Duration.seconds(29), // Max for API Gateway (on-demand preview generation)
       memorySize: 512,
       logGroup: configLogGroup,
       environment: {
@@ -543,6 +543,13 @@ export class AppStack extends cdk.Stack {
 
     httpApi.addRoutes({
       path: '/businesses/slug/{slug}',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: configIntegration,
+    });
+
+    // On-demand preview generation (unauthenticated - for preview UI)
+    httpApi.addRoutes({
+      path: '/preview/{place_id}',
       methods: [apigwv2.HttpMethod.GET],
       integration: configIntegration,
     });

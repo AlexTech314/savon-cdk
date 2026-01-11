@@ -1,13 +1,11 @@
 import React, { useState } from 'react';
 import { Business } from '@/lib/types';
 import { 
-  generateFullPipeline, 
   generateDetails, 
   generateReviews, 
   generatePhotos, 
   generateCopy,
 } from '@/lib/api';
-import { estimatePipelineCost } from '@/lib/pricing';
 import {
   Table,
   TableBody,
@@ -26,7 +24,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { CostTooltip } from '@/components/ui/cost-tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -35,17 +32,11 @@ import {
   ChevronsLeft,
   ChevronsRight,
   ArrowUpDown,
-  Check,
-  X,
   Loader2,
-  Sparkles,
   ExternalLink,
   Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-// Get cost estimate for single business pipeline
-const pipelineCost = estimatePipelineCost(1);
 
 // Pipeline step configuration
 type PipelineStep = 'search' | 'details' | 'reviews' | 'photos' | 'copy';
@@ -263,58 +254,10 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
   onSelectionChange,
   onRowClick,
 }) => {
-  const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [generatingId, setGeneratingId] = useState<string | null>(null);
-  const [generatingStatus, setGeneratingStatus] = useState<string>('');
 
   const allSelected = businesses.length > 0 && businesses.every(b => selectedIds.includes(b.place_id));
   const someSelected = businesses.some(b => selectedIds.includes(b.place_id));
-
-  const handleGeneratePreview = async (business: Business) => {
-    setGeneratingId(business.place_id);
-    
-    try {
-      // Use full pipeline with progress callback
-      await generateFullPipeline(
-        business.place_id,
-        (step) => {
-          setGeneratingStatus(step);
-        }
-      );
-      
-      setGeneratingStatus('Complete!');
-      
-      toast({
-        title: 'Pipeline Complete',
-        description: `Preview generated for "${business.name}"`,
-      });
-      
-      // Refresh the businesses list
-      queryClient.invalidateQueries({ queryKey: ['businesses'] });
-      queryClient.invalidateQueries({ queryKey: ['stats'] });
-      
-      // Keep success message briefly visible
-      setTimeout(() => {
-        setGeneratingId(null);
-        setGeneratingStatus('');
-      }, 1500);
-    } catch (error) {
-      console.error('Failed to generate preview:', error);
-      setGeneratingStatus('Failed');
-      
-      toast({
-        title: 'Error',
-        description: 'Failed to generate preview. Please try again.',
-        variant: 'destructive',
-      });
-      
-      setTimeout(() => {
-        setGeneratingId(null);
-        setGeneratingStatus('');
-      }, 2000);
-    }
-  };
 
   const handleSelectAll = () => {
     if (allSelected) {
@@ -339,7 +282,7 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
     { key: 'city', label: 'City', sortable: true },
     { key: 'state', label: 'State', sortable: true },
     { key: 'pipeline', label: 'Pipeline', sortable: false },
-    { key: 'actions', label: 'Actions', sortable: false },
+    { key: 'preview', label: 'Preview', sortable: false },
   ];
 
   if (isLoading && businesses.length === 0) {
@@ -448,55 +391,15 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                   />
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>
-                  {generatingId === business.place_id ? (
-                    <div className="flex items-center gap-2 text-sm">
-                      {generatingStatus.includes('Complete') || generatingStatus.includes('generated') ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : generatingStatus.includes('Failed') ? (
-                        <X className="h-4 w-4 text-destructive" />
-                      ) : (
-                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                      )}
-                      <span className={cn(
-                        'text-xs max-w-[120px] truncate',
-                        generatingStatus.includes('Complete') && 'text-green-500',
-                        generatingStatus.includes('Failed') && 'text-destructive',
-                        !generatingStatus.includes('Complete') && !generatingStatus.includes('Failed') && 'text-muted-foreground'
-                      )}>
-                        {generatingStatus}
-                      </span>
-                    </div>
-                  ) : business.has_website ? (
-                    <Badge variant="outline" className="text-xs text-muted-foreground">
-                      Has Website
-                    </Badge>
-                  ) : business.copy_generated ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1 h-7 text-xs"
-                      onClick={() => window.open(`https://alpha.savondesigns.com/preview/${business.place_id}`, '_blank')}
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      View
-                    </Button>
-                  ) : (
-                    <CostTooltip
-                      cost={pipelineCost.total}
-                      breakdown={pipelineCost.formattedBreakdown}
-                    >
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1 h-7 text-xs"
-                        onClick={() => handleGeneratePreview(business)}
-                        disabled={generatingId !== null}
-                      >
-                        <Sparkles className="h-3 w-3" />
-                        Generate
-                      </Button>
-                    </CostTooltip>
-                  )}
+                  <a 
+                    href={`https://alpha.savondesigns.com/preview/${business.place_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline text-sm flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Preview
+                  </a>
                 </TableCell>
               </TableRow>
             ))}

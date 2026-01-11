@@ -103,6 +103,10 @@ export function getCitiesByState(
   const filtered = cities.filter(c => stateIds.includes(c.state_id));
   
   // Already sorted by population from loadCities
+  // -1 means no limit (return all cities)
+  if (limit < 0) {
+    return filtered;
+  }
   return filtered.slice(0, limit);
 }
 

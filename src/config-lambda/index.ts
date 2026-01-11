@@ -91,6 +91,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await generatePhotos(pathParameters?.place_id!);
     }
     
+    // GET /preview/{place_id} - On-demand preview generation (unauthenticated)
+    if (routeKey === 'GET /preview/{place_id}') {
+      return await getPreview(pathParameters?.place_id!);
+    }
+    
     return response(404, { error: 'Not found' });
   } catch (error) {
     console.error('Error:', error);
@@ -996,5 +1001,316 @@ async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2>
   }));
 
   return response(200, updatedResult.Item);
+}
+
+// ============================================
+// ON-DEMAND PREVIEW GENERATION
+// ============================================
+
+/**
+ * GET /preview/{place_id}
+ * On-demand preview generation - unauthenticated endpoint for preview UI
+ * Speed-optimized: parallel Google API calls, synchronous generation
+ */
+async function getPreview(placeIdOrSlug: string): Promise<APIGatewayProxyResultV2> {
+  console.log(`Preview requested for: ${placeIdOrSlug}`);
+  
+  // 1. Try to find business by slug first, then by place_id
+  let business: Business | null = null;
+  
+  // Try slug lookup first
+  const slugResult = await docClient.send(new ScanCommand({
+    TableName: TABLE_NAME,
+    IndexName: 'by-slug',
+    FilterExpression: 'friendly_slug = :slug',
+    ExpressionAttributeValues: { ':slug': placeIdOrSlug },
+    Limit: 1,
+  }));
+  
+  if (slugResult.Items && slugResult.Items.length > 0) {
+    business = slugResult.Items[0] as Business;
+  } else {
+    // Try place_id lookup
+    const placeIdResult = await docClient.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: { place_id: placeIdOrSlug },
+    }));
+    
+    if (placeIdResult.Item) {
+      business = placeIdResult.Item as Business;
+    }
+  }
+  
+  if (!business) {
+    return response(404, { error: 'Business not found' });
+  }
+  
+  console.log(`Found business: ${business.business_name}`);
+  
+  // 2. FAST PATH: If pipeline is complete, return immediately
+  const businessRecord = business as Record<string, unknown>;
+  if (businessRecord.copy_generated === true) {
+    console.log(`Pipeline already complete for: ${business.business_name}`);
+    return response(200, business);
+  }
+  
+  // 3. SLOW PATH: Generate missing steps synchronously
+  console.log(`Starting on-demand generation for: ${business.business_name}`);
+  const startTime = Date.now();
+  
+  try {
+    // Run details + reviews in PARALLEL for speed
+    const needsDetails = !businessRecord.details_fetched;
+    const needsReviews = !businessRecord.reviews_fetched;
+    
+    if (needsDetails || needsReviews) {
+      console.log(`Fetching in parallel: details=${needsDetails}, reviews=${needsReviews}`);
+      
+      await Promise.all([
+        needsDetails ? fetchDetailsInternal(business.place_id) : Promise.resolve(),
+        needsReviews ? fetchReviewsInternal(business.place_id) : Promise.resolve(),
+      ]);
+    }
+    
+    // Generate LLM copy if needed (slowest step)
+    const refreshedBusiness = await docClient.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: { place_id: business.place_id },
+    }));
+    
+    if (!refreshedBusiness.Item || (refreshedBusiness.Item as Record<string, unknown>).copy_generated !== true) {
+      console.log(`Generating LLM copy for: ${business.business_name}`);
+      await generateCopyInternal(business.place_id);
+    }
+    
+    // Return the fully updated business
+    const finalResult = await docClient.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: { place_id: business.place_id },
+    }));
+    
+    const elapsed = Date.now() - startTime;
+    console.log(`On-demand generation complete for ${business.business_name} in ${elapsed}ms`);
+    
+    return response(200, finalResult.Item);
+  } catch (error) {
+    console.error(`On-demand generation failed for ${business.business_name}:`, error);
+    return response(500, { 
+      error: 'Failed to generate preview', 
+      details: String(error),
+      partial: business  // Return partial data so UI can show something
+    });
+  }
+}
+
+/**
+ * Internal version of generateDetails for on-demand preview
+ * Returns void, updates DynamoDB directly
+ */
+async function fetchDetailsInternal(placeId: string): Promise<void> {
+  if (!GOOGLE_API_KEY) {
+    throw new Error('Google API key not configured');
+  }
+
+  const result = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+  
+  if (!result.Item) return;
+  const business = result.Item as Business;
+
+  const url = `https://places.googleapis.com/v1/places/${placeId}`;
+  const fieldMask = [
+    'id', 'displayName', 'formattedAddress', 'addressComponents',
+    'nationalPhoneNumber', 'rating', 'userRatingCount', 'regularOpeningHours',
+    'websiteUri', 'googleMapsUri', 'location', 'primaryType',
+  ].join(',');
+
+  const apiResponse = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-FieldMask': fieldMask,
+    },
+  });
+
+  if (!apiResponse.ok) {
+    throw new Error(`Places API failed: ${apiResponse.status}`);
+  }
+
+  const details = await apiResponse.json() as PlaceDetails;
+
+  const streetNumber = extractAddressComponent(details.addressComponents, 'street_number');
+  const route = extractAddressComponent(details.addressComponents, 'route');
+  const state = extractAddressComponent(details.addressComponents, 'administrative_area_level_1');
+
+  const updateFields: Record<string, unknown> = {
+    address: details.formattedAddress || '',
+    city: extractCity(details.formattedAddress || ''),
+    state: state,
+    street: [streetNumber, route].filter(Boolean).join(' '),
+    zip_code: extractAddressComponent(details.addressComponents, 'postal_code'),
+    phone: details.nationalPhoneNumber || '',
+    rating: details.rating || null,
+    rating_count: details.userRatingCount || null,
+    hours: details.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
+    google_maps_uri: details.googleMapsUri || '',
+    latitude: details.location?.latitude || null,
+    longitude: details.location?.longitude || null,
+    website_uri: details.websiteUri || null,
+    primary_type: details.primaryType || null,
+    business_name: details.displayName?.text || business.business_name,
+    friendly_slug: `${(details.displayName?.text || business.business_name || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${placeId.slice(-8)}`,
+    details_fetched: true,
+    has_website: !!details.websiteUri,
+    details_fetched_at: new Date().toISOString(),
+  };
+
+  const updateParts: string[] = [];
+  const expressionNames: Record<string, string> = {};
+  const expressionValues: Record<string, unknown> = {};
+
+  Object.entries(updateFields).forEach(([key, value], index) => {
+    if (value !== undefined) {
+      updateParts.push(`#attr${index} = :val${index}`);
+      expressionNames[`#attr${index}`] = key;
+      expressionValues[`:val${index}`] = value;
+    }
+  });
+
+  await docClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
+}
+
+/**
+ * Internal version of generateReviews for on-demand preview
+ * Returns void, updates DynamoDB directly
+ */
+async function fetchReviewsInternal(placeId: string): Promise<void> {
+  if (!GOOGLE_API_KEY) {
+    throw new Error('Google API key not configured');
+  }
+
+  const url = `https://places.googleapis.com/v1/places/${placeId}`;
+  const fieldMask = 'reviews,editorialSummary';
+
+  const apiResponse = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-FieldMask': fieldMask,
+    },
+  });
+
+  if (!apiResponse.ok) {
+    throw new Error(`Places API failed: ${apiResponse.status}`);
+  }
+
+  const enrichment = await apiResponse.json() as PlaceEnrichment;
+
+  const reviews = (enrichment.reviews || [])
+    .slice(0, 5)
+    .filter(r => r.text?.text)
+    .map(r => ({
+      text: r.text?.text || '',
+      authorName: r.authorAttribution?.displayName || 'Anonymous',
+      authorDisplayName: formatAuthorDisplayName(r.authorAttribution?.displayName || ''),
+      authorUri: r.authorAttribution?.uri || '',
+      rating: r.rating,
+      relativeTime: r.relativePublishTimeDescription,
+    }));
+
+  const updateFields: Record<string, unknown> = {
+    reviews: JSON.stringify(reviews),
+    editorial_summary: enrichment.editorialSummary?.text || '',
+    review_count: reviews.length,
+    reviews_fetched: true,
+    reviews_fetched_at: new Date().toISOString(),
+  };
+
+  const updateParts: string[] = [];
+  const expressionNames: Record<string, string> = {};
+  const expressionValues: Record<string, unknown> = {};
+
+  Object.entries(updateFields).forEach(([key, value], index) => {
+    updateParts.push(`#attr${index} = :val${index}`);
+    expressionNames[`#attr${index}`] = key;
+    expressionValues[`:val${index}`] = value;
+  });
+
+  await docClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
+}
+
+/**
+ * Internal version of generateCopy for on-demand preview
+ * Returns void, updates DynamoDB directly
+ */
+async function generateCopyInternal(placeId: string): Promise<void> {
+  if (!CLAUDE_API_KEY) {
+    throw new Error('Claude API key not configured');
+  }
+
+  const result = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+  
+  if (!result.Item) return;
+  const business = result.Item as Business;
+
+  const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY });
+
+  const message = await anthropic.messages.create({
+    model: 'claude-sonnet-4-20250514',
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: buildUserPrompt(business) }],
+    system: SYSTEM_PROMPT,
+  });
+
+  const textContent = message.content.find(block => block.type === 'text');
+  if (!textContent || textContent.type !== 'text') {
+    throw new Error('No text response from Claude');
+  }
+
+  const copy = JSON.parse(textContent.text) as LandingPageCopy;
+  const flatCopy = flattenCopy(copy);
+
+  const updateParts: string[] = ['#copy_generated = :true', '#updated_at = :now'];
+  const expressionNames: Record<string, string> = {
+    '#copy_generated': 'copy_generated',
+    '#updated_at': 'updated_at',
+  };
+  const expressionValues: Record<string, unknown> = {
+    ':true': true,
+    ':now': new Date().toISOString(),
+  };
+
+  Object.entries(flatCopy).forEach(([key, value], index) => {
+    updateParts.push(`#attr${index} = :val${index}`);
+    expressionNames[`#attr${index}`] = key;
+    expressionValues[`:val${index}`] = value;
+  });
+
+  await docClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
 }
 

@@ -35,6 +35,10 @@ const CITY_LIMITS = [
   { value: 25, label: 'Top 25 cities' },
   { value: 50, label: 'Top 50 cities' },
   { value: 100, label: 'Top 100 cities' },
+  { value: 250, label: 'Top 250 cities' },
+  { value: 500, label: 'Top 500 cities' },
+  { value: 1000, label: 'Top 1,000 cities' },
+  { value: -1, label: 'All cities (no limit)' },
 ];
 
 // Regional presets for quick selection
@@ -379,10 +383,14 @@ export const GenerateQueriesModal: React.FC<GenerateQueriesModalProps> = ({
                     <span className="font-mono">{selectedStates.length}</span>
                     <span>states</span>
                     <span>×</span>
-                    <span className="font-mono">≤{cityLimit}</span>
+                    {cityLimit < 0 ? (
+                      <span className="font-mono">all</span>
+                    ) : (
+                      <span className="font-mono">≤{cityLimit.toLocaleString()}</span>
+                    )}
                     <span>cities each</span>
                     <span>=</span>
-                    <span className="font-mono font-medium text-foreground">{preview.queries.length}</span>
+                    <span className="font-mono font-medium text-foreground">{preview.queries.length.toLocaleString()}</span>
                     <span className="text-foreground">queries</span>
                   </div>
                 </div>
