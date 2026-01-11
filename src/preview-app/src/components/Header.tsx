@@ -20,6 +20,13 @@ export function Header({ businessName, phone }: HeaderProps) {
   }, []);
 
   const phoneDigits = phone.replace(/\D/g, "");
+  const telUrl = `tel:${phoneDigits}`;
+  
+  // Handle phone click to work in iframes on iOS
+  const handlePhoneClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    window.open(telUrl, '_top');
+  };
 
   const navLinks = [
     { href: "#services", label: "Services" },
@@ -62,7 +69,7 @@ export function Header({ businessName, phone }: HeaderProps) {
               </a>
             ))}
             <Button asChild className="gap-2">
-              <a href={`tel:${phoneDigits}`}>
+              <a href={telUrl} onClick={handlePhoneClick}>
                 <Phone className="h-4 w-4" />
                 Call Now
               </a>
@@ -101,7 +108,7 @@ export function Header({ businessName, phone }: HeaderProps) {
                 </a>
               ))}
               <Button asChild className="w-full gap-2">
-                <a href={`tel:${phoneDigits}`}>
+                <a href={telUrl} onClick={handlePhoneClick}>
                   <Phone className="h-4 w-4" />
                   Call {phone}
                 </a>

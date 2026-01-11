@@ -126,6 +126,10 @@ export default function PreviewPage() {
       )}
 
       {/* Iframe embedding the preview-app - full screen */}
+      {/* 
+        Note: tel: links should work in iframes by default.
+        If issues persist on iOS, the preview-app can use window.parent navigation.
+      */}
       <iframe
         ref={iframeRef}
         src={iframeSrc}

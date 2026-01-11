@@ -12,6 +12,13 @@ interface EmergencyCtaProps {
 
 export function EmergencyCTA({ emergencyCta, phone }: EmergencyCtaProps) {
   const phoneDigits = phone.replace(/\D/g, "");
+  const telUrl = `tel:${phoneDigits}`;
+  
+  // Handle phone click to work in iframes on iOS
+  const handlePhoneClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    window.open(telUrl, '_top');
+  };
 
   return (
     <section className="py-16 bg-accent">
@@ -31,7 +38,7 @@ export function EmergencyCTA({ emergencyCta, phone }: EmergencyCtaProps) {
             </div>
           </div>
 
-          <a href={`tel:${phoneDigits}`}>
+          <a href={telUrl} onClick={handlePhoneClick}>
             <Button
               size="lg"
               className="gap-2 bg-accent-foreground text-accent hover:bg-accent-foreground/90 shadow-prominent"

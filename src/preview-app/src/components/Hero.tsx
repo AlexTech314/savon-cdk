@@ -22,9 +22,16 @@ const badgeIcons: Record<string, typeof Clock> = {
 
 export function Hero({ hero, heroImage, rating, phone }: HeroProps) {
   const phoneDigits = phone.replace(/\D/g, "");
+  const telUrl = `tel:${phoneDigits}`;
   
   // Check if we have a real hero image (not placeholder)
   const hasRealImage = heroImage && !heroImage.includes('placeholder');
+  
+  // Handle phone click to work in iframes on iOS
+  const handlePhoneClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    window.open(telUrl, '_top');
+  };
 
   return (
     <section
@@ -97,7 +104,7 @@ export function Hero({ hero, heroImage, rating, phone }: HeroProps) {
             className="flex flex-col sm:flex-row gap-4 mb-10 animate-fade-in"
             style={{ animationDelay: "0.3s" }}
           >
-            <a href={`tel:${phoneDigits}`}>
+            <a href={telUrl} onClick={handlePhoneClick}>
               <Button size="lg" className="w-full sm:w-auto gap-2 bg-accent hover:bg-accent/90 text-accent-foreground">
                 <Phone className="h-5 w-5" />
                 {hero.primaryCta}
