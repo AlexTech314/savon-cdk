@@ -393,6 +393,45 @@ export interface PipelineFilterRule {
   value?: string;
 }
 
+/**
+ * Count businesses matching filter rules
+ * Used for accurate pipeline cost estimation
+ */
+export interface CountBusinessesRequest {
+  filterRules?: PipelineFilterRule[];
+  skipWithWebsite?: boolean;
+  runDetails?: boolean;
+  runEnrich?: boolean;
+  runPhotos?: boolean;
+  runCopy?: boolean;
+}
+
+export interface CountBusinessesResponse {
+  count: number;
+  stepCounts: {
+    total: number;
+    details: number;
+    reviews: number;
+    photos: number;
+    copy: number;
+  };
+  totalInDatabase: number;
+  message: string;
+}
+
+export const countBusinesses = async (
+  request: CountBusinessesRequest
+): Promise<CountBusinessesResponse> => {
+  return apiClient<CountBusinessesResponse>(
+    '/businesses/count',
+    {
+      method: 'POST',
+      body: JSON.stringify(request),
+      requiresAuth: true,
+    }
+  );
+};
+
 export interface StartPipelineJobOptions {
   runDetails: boolean;
   runEnrich: boolean;

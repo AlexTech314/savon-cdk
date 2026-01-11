@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM public.ecr.aws/docker/library/node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files
@@ -11,7 +11,7 @@ COPY *.ts ./
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine
+FROM public.ecr.aws/docker/library/node:20-alpine
 WORKDIR /app
 
 # Copy built files and production dependencies

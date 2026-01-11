@@ -380,6 +380,204 @@ export function estimatePipelineCost(count: number): CostBreakdown {
 }
 
 /**
+ * Pipeline step configuration for cost estimation
+ */
+export interface PipelineStepConfig {
+  runDetails: boolean;
+  runEnrich: boolean;  // Reviews
+  runPhotos: boolean;
+  runCopy: boolean;
+}
+
+/**
+ * Extended cost breakdown with per-business and step details
+ */
+export interface PipelineJobCostBreakdown extends CostBreakdown {
+  businessCount: number;
+  perBusinessCost: number;
+  perBusinessFormatted: string;
+  stepBreakdown: {
+    step: string;
+    enabled: boolean;
+    unitCost: number;
+    totalCost: number;
+    unitCostFormatted: string;
+    totalCostFormatted: string;
+    apiProvider: string;
+    description: string;
+  }[];
+  warnings: string[];
+}
+
+/**
+ * Estimate cost for running a pipeline job with selected steps
+ * 
+ * This provides a comprehensive breakdown including:
+ * - Cost per business for each step
+ * - Total cost per step
+ * - Overall total
+ * - Volume discount considerations
+ * - Warnings for high-cost operations
+ * 
+ * @param businessCount - Number of businesses to process
+ * @param steps - Which pipeline steps are enabled
+ * @param currentMonthlyRequests - Current month's Google API requests (for volume discount)
+ */
+export function estimatePipelineJobCost(
+  businessCount: number,
+  steps: PipelineStepConfig,
+  currentMonthlyRequests: number = 0
+): PipelineJobCostBreakdown {
+  const stepBreakdown: PipelineJobCostBreakdown['stepBreakdown'] = [];
+  const warnings: string[] = [];
+  let totalCost = 0;
+  let totalGoogleRequests = 0;
+  
+  // Details step (Google Places API - $0.017/request)
+  const detailsUnitCost = PRICING.google.placeDetails;
+  const detailsEnabled = steps.runDetails;
+  const detailsTotalCost = detailsEnabled ? businessCount * detailsUnitCost : 0;
+  if (detailsEnabled) {
+    totalGoogleRequests += businessCount;
+  }
+  stepBreakdown.push({
+    step: 'Details',
+    enabled: detailsEnabled,
+    unitCost: detailsUnitCost,
+    totalCost: detailsTotalCost,
+    unitCostFormatted: formatCost(detailsUnitCost),
+    totalCostFormatted: formatCost(detailsTotalCost),
+    apiProvider: 'Google Places API',
+    description: 'Address, phone, hours, rating, location',
+  });
+  totalCost += detailsTotalCost;
+  
+  // Reviews/Enrich step (Google Places API - $0.025/request)
+  const reviewsUnitCost = PRICING.google.placeDetailsReviews;
+  const reviewsEnabled = steps.runEnrich;
+  const reviewsTotalCost = reviewsEnabled ? businessCount * reviewsUnitCost : 0;
+  if (reviewsEnabled) {
+    totalGoogleRequests += businessCount;
+  }
+  stepBreakdown.push({
+    step: 'Reviews',
+    enabled: reviewsEnabled,
+    unitCost: reviewsUnitCost,
+    totalCost: reviewsTotalCost,
+    unitCostFormatted: formatCost(reviewsUnitCost),
+    totalCostFormatted: formatCost(reviewsTotalCost),
+    apiProvider: 'Google Places API',
+    description: 'Reviews and editorial summary',
+  });
+  totalCost += reviewsTotalCost;
+  
+  // Photos step (Google Places API - $0.007/request)
+  const photosUnitCost = PRICING.google.photos;
+  const photosEnabled = steps.runPhotos;
+  const photosTotalCost = photosEnabled ? businessCount * photosUnitCost : 0;
+  if (photosEnabled) {
+    totalGoogleRequests += businessCount;
+  }
+  stepBreakdown.push({
+    step: 'Photos',
+    enabled: photosEnabled,
+    unitCost: photosUnitCost,
+    totalCost: photosTotalCost,
+    unitCostFormatted: formatCost(photosUnitCost),
+    totalCostFormatted: formatCost(photosTotalCost),
+    apiProvider: 'Google Places API',
+    description: 'Photo URLs and references',
+  });
+  totalCost += photosTotalCost;
+  
+  // Copy step (Claude API)
+  const copyInputCost = PRICING.claude.avgInputTokens * PRICING.claude.inputPerToken;
+  const copyOutputCost = PRICING.claude.avgOutputTokens * PRICING.claude.outputPerToken;
+  const copyUnitCost = copyInputCost + copyOutputCost;
+  const copyEnabled = steps.runCopy;
+  const copyTotalCost = copyEnabled ? businessCount * copyUnitCost : 0;
+  stepBreakdown.push({
+    step: 'Copy',
+    enabled: copyEnabled,
+    unitCost: copyUnitCost,
+    totalCost: copyTotalCost,
+    unitCostFormatted: formatCost(copyUnitCost),
+    totalCostFormatted: formatCost(copyTotalCost),
+    apiProvider: 'Anthropic Claude',
+    description: `~${PRICING.claude.avgInputTokens + PRICING.claude.avgOutputTokens} tokens per business`,
+  });
+  totalCost += copyTotalCost;
+  
+  // Apply volume discount to Google API costs
+  const googleCostBeforeDiscount = detailsTotalCost + reviewsTotalCost + photosTotalCost;
+  const totalWithNewRequests = currentMonthlyRequests + totalGoogleRequests;
+  const googleCostAfterDiscount = applyVolumeDiscount(googleCostBeforeDiscount, totalWithNewRequests);
+  const volumeDiscount = googleCostBeforeDiscount - googleCostAfterDiscount;
+  
+  // Adjust total with volume discount
+  const finalTotal = totalCost - volumeDiscount;
+  
+  // Calculate per-business cost
+  const perBusinessCost = businessCount > 0 ? finalTotal / businessCount : 0;
+  
+  // Generate warnings
+  if (businessCount > 1000) {
+    warnings.push(`Large job: ${businessCount.toLocaleString()} businesses will be processed`);
+  }
+  if (finalTotal > 50) {
+    warnings.push(`Estimated cost exceeds $50`);
+  }
+  if (finalTotal > 100) {
+    warnings.push(`High cost alert: Consider running in smaller batches`);
+  }
+  if (totalWithNewRequests > 100000 && volumeDiscount > 0) {
+    warnings.push(`Volume discount applied: -${formatCost(volumeDiscount)} (15% off Google API)`);
+  }
+  
+  // Build formatted breakdown
+  const formattedBreakdown: string[] = [
+    `Businesses: ${businessCount.toLocaleString()}`,
+    '',
+  ];
+  
+  for (const step of stepBreakdown) {
+    if (step.enabled) {
+      formattedBreakdown.push(
+        `${step.step}: ${step.totalCostFormatted} (${businessCount.toLocaleString()} × ${step.unitCostFormatted})`
+      );
+    }
+  }
+  
+  if (volumeDiscount > 0) {
+    formattedBreakdown.push('');
+    formattedBreakdown.push(`Volume discount: -${formatCost(volumeDiscount)}`);
+  }
+  
+  // Build items array
+  const items: CostItem[] = stepBreakdown
+    .filter(s => s.enabled)
+    .map(s => ({
+      name: `${s.step} (${s.apiProvider})`,
+      cost: s.totalCost,
+      quantity: businessCount,
+      unitCost: s.unitCost,
+      description: s.description,
+    }));
+  
+  return {
+    total: finalTotal,
+    items,
+    formatted: formatCost(finalTotal),
+    formattedBreakdown,
+    businessCount,
+    perBusinessCost,
+    perBusinessFormatted: formatCost(perBusinessCost),
+    stepBreakdown,
+    warnings,
+  };
+}
+
+/**
  * Estimate cost for a campaign run (SEARCH ONLY)
  * 
  * Campaigns only perform Text Search operations.

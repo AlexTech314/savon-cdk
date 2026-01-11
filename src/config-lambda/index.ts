@@ -71,6 +71,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await exportBusinesses();
     }
     
+    // POST /businesses/count - Count businesses matching filter rules
+    if (routeKey === 'POST /businesses/count') {
+      return await countBusinesses(body);
+    }
+    
     // POST /businesses/{place_id}/generate-copy - Generate preview copy for a business
     if (routeKey === 'POST /businesses/{place_id}/generate-copy') {
       return await generateCopy(pathParameters?.place_id!);
@@ -331,6 +336,104 @@ async function exportBusinesses(): Promise<APIGatewayProxyResultV2> {
   return response(200, csv, { 
     'Content-Type': 'text/csv',
     'Content-Disposition': `attachment; filename="businesses_${Date.now()}.csv"`,
+  });
+}
+
+/**
+ * Count businesses matching filter rules
+ * Used for pipeline cost estimation
+ */
+interface FilterRule {
+  field: string;
+  operator: 'EXISTS' | 'NOT_EXISTS' | 'EQUALS' | 'NOT_EQUALS';
+  value?: string;
+}
+
+interface CountRequest {
+  filterRules?: FilterRule[];
+  skipWithWebsite?: boolean;
+  // Which pipeline steps are selected (to check which steps are already complete)
+  runDetails?: boolean;
+  runEnrich?: boolean;
+  runPhotos?: boolean;
+  runCopy?: boolean;
+}
+
+async function countBusinesses(body?: string): Promise<APIGatewayProxyResultV2> {
+  const request: CountRequest = body ? JSON.parse(body) : {};
+  const { filterRules = [], skipWithWebsite = true, runDetails, runEnrich, runPhotos, runCopy } = request;
+  
+  // Scan all items and apply filters
+  const items: Record<string, unknown>[] = [];
+  let lastKey: Record<string, unknown> | undefined;
+  
+  do {
+    const command = new ScanCommand({
+      TableName: TABLE_NAME,
+      ExclusiveStartKey: lastKey,
+    });
+    
+    const result = await docClient.send(command);
+    items.push(...(result.Items || []));
+    lastKey = result.LastEvaluatedKey;
+  } while (lastKey);
+  
+  // Apply filter rules
+  let filtered = items;
+  
+  // Skip businesses with website if enabled
+  if (skipWithWebsite) {
+    filtered = filtered.filter(item => !item.has_website);
+  }
+  
+  // Apply custom filter rules (all must match - AND logic)
+  for (const rule of filterRules) {
+    filtered = filtered.filter(item => {
+      const fieldValue = item[rule.field];
+      
+      switch (rule.operator) {
+        case 'EXISTS':
+          return fieldValue !== undefined && fieldValue !== null && fieldValue !== '';
+        case 'NOT_EXISTS':
+          return fieldValue === undefined || fieldValue === null || fieldValue === '';
+        case 'EQUALS':
+          return String(fieldValue).toLowerCase() === String(rule.value || '').toLowerCase();
+        case 'NOT_EQUALS':
+          return String(fieldValue).toLowerCase() !== String(rule.value || '').toLowerCase();
+        default:
+          return true;
+      }
+    });
+  }
+  
+  // Further filter: skip businesses that have already completed all requested steps
+  // (i.e., we only want to count businesses that will actually be processed)
+  if (runDetails || runEnrich || runPhotos || runCopy) {
+    filtered = filtered.filter(item => {
+      // A business needs processing if at least one selected step hasn't been done yet
+      if (runDetails && !item.details_fetched) return true;
+      if (runEnrich && !item.reviews_fetched) return true;
+      if (runPhotos && !item.photos_fetched) return true;
+      if (runCopy && !item.copy_generated) return true;
+      // All selected steps already done - skip this business
+      return false;
+    });
+  }
+  
+  // Calculate per-step breakdown
+  const stepCounts = {
+    total: filtered.length,
+    details: runDetails ? filtered.filter(b => !b.details_fetched).length : 0,
+    reviews: runEnrich ? filtered.filter(b => !b.reviews_fetched).length : 0,
+    photos: runPhotos ? filtered.filter(b => !b.photos_fetched).length : 0,
+    copy: runCopy ? filtered.filter(b => !b.copy_generated).length : 0,
+  };
+  
+  return response(200, {
+    count: filtered.length,
+    stepCounts,
+    totalInDatabase: items.length,
+    message: `${filtered.length} businesses match the filter rules and need processing`,
   });
 }
 

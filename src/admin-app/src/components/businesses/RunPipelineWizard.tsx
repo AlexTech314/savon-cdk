@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { 
   Play, 
   Plus, 
@@ -30,17 +32,16 @@ import {
   DollarSign,
   Info,
   AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { 
   startPipelineJob, 
   PipelineFilterRule,
+  countBusinesses,
 } from '@/lib/api';
 import {
-  estimateDetailsCost,
-  estimateReviewsCost,
-  estimatePhotosCost,
-  estimateCopyCost,
   formatCost,
+  PRICING,
 } from '@/lib/pricing';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -56,28 +57,33 @@ const PIPELINE_STEPS = [
     id: 'details', 
     label: 'Details', 
     description: 'Fetch address, phone, hours, rating from Google',
-    costFn: estimateDetailsCost,
+    unitCost: PRICING.google.placeDetails,
+    provider: 'Google Places API',
     requires: [],
   },
   { 
     id: 'enrich', 
     label: 'Reviews', 
     description: 'Fetch reviews and editorial summary from Google',
-    costFn: estimateReviewsCost,
+    unitCost: PRICING.google.placeDetailsReviews,
+    provider: 'Google Places API',
     requires: ['details'],
   },
   { 
     id: 'photos', 
     label: 'Photos', 
     description: 'Fetch photo URLs from Google',
-    costFn: estimatePhotosCost,
+    unitCost: PRICING.google.photos,
+    provider: 'Google Places API',
     requires: ['details'],
   },
   { 
     id: 'copy', 
     label: 'Copy', 
     description: 'Generate LLM marketing copy with Claude',
-    costFn: estimateCopyCost,
+    unitCost: (PRICING.claude.avgInputTokens * PRICING.claude.inputPerToken) + 
+              (PRICING.claude.avgOutputTokens * PRICING.claude.outputPerToken),
+    provider: 'Anthropic Claude',
     requires: ['details', 'enrich'],
   },
 ] as const;
@@ -168,38 +174,126 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
     return OPERATORS.find(o => o.value === operator)?.needsValue ?? false;
   };
 
-  // Cost estimation
+  // Query to get accurate count based on filter rules
+  const { data: countData, isLoading: isCountLoading, refetch: refetchCount } = useQuery({
+    queryKey: [
+      'businessCount',
+      Array.from(selectedSteps),
+      filterRules,
+      skipWithWebsite,
+    ],
+    queryFn: () => countBusinesses({
+      filterRules: filterRules.length > 0 ? filterRules : undefined,
+      skipWithWebsite,
+      runDetails: selectedSteps.has('details'),
+      runEnrich: selectedSteps.has('enrich'),
+      runPhotos: selectedSteps.has('photos'),
+      runCopy: selectedSteps.has('copy'),
+    }),
+    enabled: open && selectedSteps.size > 0,
+    staleTime: 10000, // Cache for 10 seconds
+  });
+
+  // Cost estimation using actual counts from API
   const estimatedCost = useMemo(() => {
-    // Rough estimate based on total businesses
-    // In reality, this would need to query for actual count matching filters
-    const estimatedCount = Math.min(totalBusinesses, 100);
+    const stepCounts = countData?.stepCounts || {
+      total: totalBusinesses,
+      details: totalBusinesses,
+      reviews: totalBusinesses,
+      photos: totalBusinesses,
+      copy: totalBusinesses,
+    };
     
-    let total = 0;
-    const breakdown: string[] = [];
+    const runDetails = selectedSteps.has('details');
+    const runEnrich = selectedSteps.has('enrich');
+    const runPhotos = selectedSteps.has('photos');
+    const runCopy = selectedSteps.has('copy');
     
-    if (selectedSteps.has('details')) {
-      const cost = estimateDetailsCost(estimatedCount);
-      total += cost.total;
-      breakdown.push(`Details: ${cost.formatted}`);
+    // Calculate costs per step based on actual counts
+    const detailsUnitCost = PRICING.google.placeDetails;
+    const reviewsUnitCost = PRICING.google.placeDetailsReviews;
+    const photosUnitCost = PRICING.google.photos;
+    const copyInputCost = PRICING.claude.avgInputTokens * PRICING.claude.inputPerToken;
+    const copyOutputCost = PRICING.claude.avgOutputTokens * PRICING.claude.outputPerToken;
+    const copyUnitCost = copyInputCost + copyOutputCost;
+    
+    const detailsCost = runDetails ? stepCounts.details * detailsUnitCost : 0;
+    const reviewsCost = runEnrich ? stepCounts.reviews * reviewsUnitCost : 0;
+    const photosCost = runPhotos ? stepCounts.photos * photosUnitCost : 0;
+    const copyCost = runCopy ? stepCounts.copy * copyUnitCost : 0;
+    
+    const totalCost = detailsCost + reviewsCost + photosCost + copyCost;
+    const businessCount = countData?.count || totalBusinesses;
+    const perBusinessCost = businessCount > 0 ? totalCost / businessCount : 0;
+    
+    // Build step breakdown for display
+    const stepBreakdown = [
+      {
+        step: 'Details',
+        enabled: runDetails,
+        count: stepCounts.details,
+        unitCost: detailsUnitCost,
+        totalCost: detailsCost,
+        unitCostFormatted: formatCost(detailsUnitCost),
+        totalCostFormatted: formatCost(detailsCost),
+        apiProvider: 'Google Places API',
+      },
+      {
+        step: 'Reviews',
+        enabled: runEnrich,
+        count: stepCounts.reviews,
+        unitCost: reviewsUnitCost,
+        totalCost: reviewsCost,
+        unitCostFormatted: formatCost(reviewsUnitCost),
+        totalCostFormatted: formatCost(reviewsCost),
+        apiProvider: 'Google Places API',
+      },
+      {
+        step: 'Photos',
+        enabled: runPhotos,
+        count: stepCounts.photos,
+        unitCost: photosUnitCost,
+        totalCost: photosCost,
+        unitCostFormatted: formatCost(photosUnitCost),
+        totalCostFormatted: formatCost(photosCost),
+        apiProvider: 'Google Places API',
+      },
+      {
+        step: 'Copy',
+        enabled: runCopy,
+        count: stepCounts.copy,
+        unitCost: copyUnitCost,
+        totalCost: copyCost,
+        unitCostFormatted: formatCost(copyUnitCost),
+        totalCostFormatted: formatCost(copyCost),
+        apiProvider: 'Anthropic Claude',
+      },
+    ];
+    
+    // Generate warnings
+    const warnings: string[] = [];
+    if (businessCount > 1000) {
+      warnings.push(`Large job: ${businessCount.toLocaleString()} businesses will be processed`);
     }
-    if (selectedSteps.has('enrich')) {
-      const cost = estimateReviewsCost(estimatedCount);
-      total += cost.total;
-      breakdown.push(`Reviews: ${cost.formatted}`);
+    if (totalCost > 50) {
+      warnings.push(`Estimated cost exceeds $50`);
     }
-    if (selectedSteps.has('photos')) {
-      const cost = estimatePhotosCost(estimatedCount);
-      total += cost.total;
-      breakdown.push(`Photos: ${cost.formatted}`);
-    }
-    if (selectedSteps.has('copy')) {
-      const cost = estimateCopyCost(estimatedCount);
-      total += cost.total;
-      breakdown.push(`Copy: ${cost.formatted}`);
+    if (totalCost > 100) {
+      warnings.push(`High cost alert: Consider running in smaller batches`);
     }
     
-    return { total, breakdown, formatted: formatCost(total), estimatedCount };
-  }, [selectedSteps, totalBusinesses]);
+    return {
+      total: totalCost,
+      formatted: formatCost(totalCost),
+      businessCount,
+      perBusinessCost,
+      perBusinessFormatted: formatCost(perBusinessCost),
+      stepBreakdown,
+      warnings,
+      totalInDatabase: countData?.totalInDatabase || totalBusinesses,
+      isLoading: isCountLoading,
+    };
+  }, [countData, selectedSteps, totalBusinesses, isCountLoading]);
 
   // Can proceed validation
   const canProceedStep1 = selectedSteps.size > 0;
@@ -336,22 +430,28 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
                         className="mt-0.5"
                       />
                       <div className="flex-1">
-                        <Label 
-                          htmlFor={pipelineStep.id}
-                          className="font-medium cursor-pointer"
-                        >
-                          {pipelineStep.label}
-                        </Label>
+                        <div className="flex items-center justify-between">
+                          <Label 
+                            htmlFor={pipelineStep.id}
+                            className="font-medium cursor-pointer"
+                          >
+                            {pipelineStep.label}
+                          </Label>
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            {formatCost(pipelineStep.unitCost)}/business
+                          </Badge>
+                        </div>
                         <p className="text-sm text-muted-foreground">
                           {pipelineStep.description}
                         </p>
-                        {pipelineStep.requires.length > 0 && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Requires: {pipelineStep.requires.map(r => 
+                        <p className="text-xs text-muted-foreground/70 mt-1">
+                          via {pipelineStep.provider}
+                          {pipelineStep.requires.length > 0 && (
+                            <> • Requires: {pipelineStep.requires.map(r => 
                               PIPELINE_STEPS.find(s => s.id === r)?.label
-                            ).join(', ')}
-                          </p>
-                        )}
+                            ).join(', ')}</>
+                          )}
+                        </p>
                       </div>
                     </div>
                   );
@@ -526,26 +626,75 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
                   </p>
                 </div>
 
-                {/* Cost estimate */}
+                {/* Cost estimate - comprehensive breakdown */}
                 <div className="p-3 rounded-lg border border-primary/30 bg-primary/5">
-                  <div className="flex items-center gap-2 mb-2">
-                    <DollarSign className="h-4 w-4 text-primary" />
-                    <span className="font-medium text-sm">Estimated Cost</span>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <DollarSign className="h-4 w-4 text-primary" />
+                      <span className="font-medium text-sm">Estimated Cost</span>
+                      {estimatedCost.isLoading && (
+                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                      )}
+                    </div>
+                    {estimatedCost.isLoading ? (
+                      <Skeleton className="h-7 w-16" />
+                    ) : (
+                      <span className="text-lg font-bold text-primary">
+                        {estimatedCost.formatted}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-sm space-y-1">
-                    <p className="text-muted-foreground">
-                      Based on ~{estimatedCost.estimatedCount} businesses
-                    </p>
-                    {estimatedCost.breakdown.map((line, i) => (
-                      <p key={i} className="text-muted-foreground text-xs">{line}</p>
+                  
+                  {/* Business count */}
+                  <div className="text-sm mb-3 pb-2 border-b border-border/50">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Businesses matching filters:</span>
+                      {estimatedCost.isLoading ? (
+                        <Skeleton className="h-4 w-12" />
+                      ) : (
+                        <span className="font-mono">{estimatedCost.businessCount.toLocaleString()}</span>
+                      )}
+                    </div>
+                    <div className="flex justify-between text-muted-foreground text-xs">
+                      <span>Total in database:</span>
+                      <span className="font-mono text-muted-foreground/70">{estimatedCost.totalInDatabase.toLocaleString()}</span>
+                    </div>
+                  </div>
+                  
+                  {/* Step-by-step breakdown with per-step counts */}
+                  <div className="space-y-1.5 text-xs">
+                    {estimatedCost.stepBreakdown.filter(s => s.enabled).map((stepInfo) => (
+                      <div key={stepInfo.step} className="flex justify-between items-center">
+                        <div className="text-muted-foreground">
+                          <span className="font-medium text-foreground">{stepInfo.step}</span>
+                          <span className="text-[10px] ml-1">
+                            ({stepInfo.unitCostFormatted} × {stepInfo.count.toLocaleString()} need{stepInfo.count === 1 ? 's' : ''} processing)
+                          </span>
+                        </div>
+                        {estimatedCost.isLoading ? (
+                          <Skeleton className="h-3 w-10" />
+                        ) : (
+                          <span className="font-mono">{stepInfo.totalCostFormatted}</span>
+                        )}
+                      </div>
                     ))}
-                    <p className="font-medium pt-1 border-t border-border/50">
-                      Total: {estimatedCost.formatted}
-                    </p>
                   </div>
+                  
+                  {/* Warnings */}
+                  {estimatedCost.warnings.length > 0 && (
+                    <div className="mt-3 pt-2 border-t border-border/50 space-y-1">
+                      {estimatedCost.warnings.map((warning, i) => (
+                        <div key={i} className="flex items-start gap-1 text-[10px] text-yellow-600 dark:text-yellow-400">
+                          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                          <span>{warning}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
                   <div className="flex items-start gap-1 mt-2 pt-2 border-t border-border/50 text-[10px] text-muted-foreground">
                     <Info className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>Actual cost depends on businesses matching your filters.</span>
+                    <span>Actual cost depends on businesses matching your filters. Businesses that have already completed a step will be skipped.</span>
                   </div>
                 </div>
 

@@ -1,5 +1,5 @@
 # Build stage - compile TypeScript
-FROM node:20-alpine AS builder
+FROM public.ecr.aws/docker/library/node:20-alpine AS builder
 WORKDIR /app
 
 # Copy package files

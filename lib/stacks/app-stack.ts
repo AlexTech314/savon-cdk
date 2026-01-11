@@ -607,6 +607,14 @@ export class AppStack extends cdk.Stack {
       authorizer,
     });
 
+    // Count businesses matching filter rules (for pipeline cost estimation)
+    httpApi.addRoutes({
+      path: '/businesses/count',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: configIntegration,
+      authorizer,
+    });
+
     httpApi.addRoutes({
       path: '/jobs',
       methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
