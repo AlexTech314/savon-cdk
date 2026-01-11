@@ -43,6 +43,12 @@ interface JobInput {
   searches: SearchQuery[];
   maxResultsPerSearch: number;
   onlyWithoutWebsite: boolean;
+  // Pipeline flags - which steps to run
+  runSearch: boolean;
+  runDetails: boolean;
+  runEnrich: boolean;
+  runPhotos: boolean;
+  runCopy: boolean;
 }
 
 interface Job {
@@ -181,12 +187,19 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
   const campaign = campaignResult.Item as Campaign;
   
   // Build job input from campaign
+  // Default: run search and details to find and populate new businesses
   const jobInput: JobInput = {
     campaignId: campaign.campaign_id,
     jobType: 'places', // All campaign jobs are places (lead finding)
     searches: campaign.searches,
     maxResultsPerSearch: campaign.max_results_per_search,
     onlyWithoutWebsite: campaign.only_without_website,
+    // Pipeline flags - search + details by default for campaigns
+    runSearch: true,
+    runDetails: true,
+    runEnrich: false,  // Reviews - optional, costs extra
+    runPhotos: false,  // Photos - optional, costs extra
+    runCopy: false,    // LLM copy - optional, costs extra
   };
   
   // Generate job ID
