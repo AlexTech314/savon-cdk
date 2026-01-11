@@ -145,19 +145,19 @@ const PipelineStatus: React.FC<{
       switch (step) {
         case 'details':
           await generateDetails(business.place_id);
-          toast({ title: 'Details Fetched', description: `Updated ${business.business_name}` });
+          toast({ title: 'Details Fetched', description: `Updated ${business.name}` });
           break;
         case 'reviews':
           await generateReviews(business.place_id);
-          toast({ title: 'Reviews Fetched', description: `Updated ${business.business_name}` });
+          toast({ title: 'Reviews Fetched', description: `Updated ${business.name}` });
           break;
         case 'photos':
           await generatePhotos(business.place_id);
-          toast({ title: 'Photos Fetched', description: `Updated ${business.business_name}` });
+          toast({ title: 'Photos Fetched', description: `Updated ${business.name}` });
           break;
         case 'copy':
           await generateCopy(business.place_id);
-          toast({ title: 'Copy Generated', description: `Updated ${business.business_name}` });
+          toast({ title: 'Copy Generated', description: `Updated ${business.name}` });
           break;
         default:
           toast({ title: 'Not Supported', description: 'This step cannot be run individually', variant: 'destructive' });
@@ -169,7 +169,7 @@ const PipelineStatus: React.FC<{
       console.error(`Failed to run ${step}:`, error);
       toast({ 
         title: 'Error', 
-        description: `Failed to run ${step} for ${business.business_name}`,
+        description: `Failed to run ${step} for ${business.name}`,
         variant: 'destructive'
       });
     } finally {

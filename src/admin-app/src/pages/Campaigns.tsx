@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getCampaigns, deleteCampaign, runCampaign } from '@/lib/api';
 import { Campaign } from '@/types/jobs';
 import { CampaignForm } from '@/components/campaigns/CampaignForm';
-import { estimateSearchCost } from '@/lib/pricing';
+import { estimateCampaignCost } from '@/lib/pricing';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -218,7 +218,10 @@ const Campaigns: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <span className="text-sm font-medium text-primary">
-                        {estimateSearchCost(campaign.searches.length).formatted}
+                        {estimateCampaignCost(
+                          campaign.searches.length,
+                          campaign.max_results_per_search
+                        ).formatted}
                       </span>
                     </TableCell>
                     <TableCell>

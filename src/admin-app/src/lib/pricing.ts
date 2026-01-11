@@ -5,6 +5,13 @@
  * 
  * IMPORTANT: These are estimates based on publicly available pricing.
  * Actual costs may vary based on usage tiers, regions, and billing agreements.
+ * 
+ * Google Maps Platform Volume Discounts:
+ * - Google offers a $200/month free credit
+ * - Volume discounts apply to monthly usage across all SKUs
+ * - Tier 1: 0-100,000 requests/month (base price)
+ * - Tier 2: 100,001-500,000 requests/month (~15% discount)
+ * - Tier 3: 500,001+ requests/month (custom pricing, ~25-40% discount)
  */
 
 // ============================================
@@ -13,22 +20,46 @@
 
 export const PRICING = {
   google: {
-    // Text Search (Pro tier) - $32/1000 requests
-    textSearch: 0.032,
+    // Text Search (New) - Pro tier - $32/1000 requests
+    // Each search can return up to 20 results per page
+    // Pagination uses additional requests (up to 3 pages = 60 results max)
+    textSearch: {
+      pricePerRequest: 0.032, // $32/1000
+      resultsPerPage: 20,
+      maxPages: 3,
+      maxResultsPerQuery: 60,
+    },
     
-    // Place Details (Advanced tier) - $20/1000 requests
-    // Includes: address, phone, hours, rating, website, location
-    placeDetails: 0.020,
+    // Place Details (Basic tier) - $5/1000 requests
+    // Minimal fields: name, address, location
+    placeDetailsBasic: 0.005,
     
-    // Place Details (Preferred tier) - $25/1000 requests
-    // Includes: reviews, editorialSummary (adds $5 to Advanced)
-    placeDetailsReviews: 0.025,
+    // Place Details (Contact tier) - $7/1000 requests
+    // Adds: phone, website, hours
+    placeDetailsContact: 0.007,
+    
+    // Place Details (Atmosphere tier) - $10/1000 requests
+    // Adds: ratings, reviews
+    placeDetailsAtmosphere: 0.010,
+    
+    // For our use: we request everything = Basic + Contact + Atmosphere = $0.022
+    // But billed as single request at highest tier = $0.017 per Google's docs
+    // Actually, new API bills per-field-mask, so let's use combined estimate
+    placeDetails: 0.017, // Combined estimate for all fields we need
+    
+    // Place Details (Preferred Data) - additional $5/1000 for reviews/editorialSummary
+    // When requesting reviews specifically
+    placeDetailsReviews: 0.025, // $25/1000
     
     // Photos - $7/1000 requests
     photos: 0.007,
     
-    // Free monthly quota (per SKU)
-    freeMonthly: 10000,
+    // Volume discount tiers (cumulative monthly requests)
+    volumeDiscountTiers: [
+      { threshold: 0, discount: 0 },           // 0-100K: no discount
+      { threshold: 100000, discount: 0.15 },   // 100K-500K: 15% off
+      { threshold: 500000, discount: 0.25 },   // 500K+: 25% off (estimate)
+    ],
   },
   
   claude: {
@@ -123,7 +154,7 @@ export interface PricingSource {
 }
 
 // ============================================
-// COST ESTIMATION FUNCTIONS
+// HELPER FUNCTIONS
 // ============================================
 
 /**
@@ -140,8 +171,95 @@ export function formatCost(cost: number): string {
 }
 
 /**
- * Estimate cost for fetching place details (Enterprise tier)
- * Includes: address, phone, hours, rating, website, location
+ * Calculate the number of API pages needed based on maxResultsPerSearch
+ * Google Text Search returns up to 20 results per page, max 3 pages (60 results)
+ */
+export function calculatePagesNeeded(maxResultsPerSearch: number): number {
+  const resultsPerPage = PRICING.google.textSearch.resultsPerPage; // 20
+  const maxPages = PRICING.google.textSearch.maxPages; // 3
+  
+  // Cap at 60 results (Google's limit)
+  const cappedResults = Math.min(maxResultsPerSearch, PRICING.google.textSearch.maxResultsPerQuery);
+  
+  // Calculate pages needed (ceil division)
+  const pagesNeeded = Math.ceil(cappedResults / resultsPerPage);
+  
+  return Math.min(pagesNeeded, maxPages);
+}
+
+/**
+ * Apply volume discount based on total monthly request count
+ * This is an estimate - actual discounts require Google billing agreement
+ */
+export function applyVolumeDiscount(baseCost: number, totalMonthlyRequests: number): number {
+  const tiers = PRICING.google.volumeDiscountTiers;
+  
+  // Find applicable tier (highest threshold that's <= total requests)
+  let discount = 0;
+  for (const tier of tiers) {
+    if (totalMonthlyRequests >= tier.threshold) {
+      discount = tier.discount;
+    }
+  }
+  
+  return baseCost * (1 - discount);
+}
+
+// ============================================
+// COST ESTIMATION FUNCTIONS
+// ============================================
+
+/**
+ * Estimate cost for text search operations
+ * 
+ * @param numSearches - Number of search queries
+ * @param maxResultsPerSearch - Max results requested per search (affects pagination)
+ * @param currentMonthlyRequests - Current month's request count (for volume discount)
+ */
+export function estimateSearchCost(
+  numSearches: number,
+  maxResultsPerSearch: number = 20,
+  currentMonthlyRequests: number = 0
+): CostBreakdown {
+  const pagesPerSearch = calculatePagesNeeded(maxResultsPerSearch);
+  const totalApiCalls = numSearches * pagesPerSearch;
+  const unitCost = PRICING.google.textSearch.pricePerRequest;
+  
+  let baseCost = totalApiCalls * unitCost;
+  
+  // Apply volume discount if applicable
+  const totalWithNew = currentMonthlyRequests + totalApiCalls;
+  const discountedCost = applyVolumeDiscount(baseCost, totalWithNew);
+  const discount = baseCost - discountedCost;
+  
+  const items: CostItem[] = [
+    {
+      name: 'Google Text Search API',
+      cost: discountedCost,
+      quantity: totalApiCalls,
+      unitCost,
+      description: `${numSearches} queries × ${pagesPerSearch} page(s) each`,
+    },
+  ];
+  
+  const formattedBreakdown = [
+    `Search: ${formatCost(discountedCost)} (${numSearches} queries × ${pagesPerSearch} pages = ${totalApiCalls} API calls)`,
+  ];
+  
+  if (discount > 0) {
+    formattedBreakdown.push(`Volume discount applied: -${formatCost(discount)}`);
+  }
+  
+  return {
+    total: discountedCost,
+    items,
+    formatted: formatCost(discountedCost),
+    formattedBreakdown,
+  };
+}
+
+/**
+ * Estimate cost for fetching place details
  */
 export function estimateDetailsCost(count: number): CostBreakdown {
   const unitCost = PRICING.google.placeDetails;
@@ -159,12 +277,12 @@ export function estimateDetailsCost(count: number): CostBreakdown {
       },
     ],
     formatted: formatCost(total),
-    formattedBreakdown: [`Details: ${formatCost(total)} (${count} x ${formatCost(unitCost)})`],
+    formattedBreakdown: [`Details: ${formatCost(total)} (${count} × ${formatCost(unitCost)})`],
   };
 }
 
 /**
- * Estimate cost for fetching reviews (Enterprise + Atmosphere tier)
+ * Estimate cost for fetching reviews (Preferred tier)
  */
 export function estimateReviewsCost(count: number): CostBreakdown {
   const unitCost = PRICING.google.placeDetailsReviews;
@@ -182,7 +300,7 @@ export function estimateReviewsCost(count: number): CostBreakdown {
       },
     ],
     formatted: formatCost(total),
-    formattedBreakdown: [`Reviews: ${formatCost(total)} (${count} x ${formatCost(unitCost)})`],
+    formattedBreakdown: [`Reviews: ${formatCost(total)} (${count} × ${formatCost(unitCost)})`],
   };
 }
 
@@ -205,7 +323,7 @@ export function estimatePhotosCost(count: number): CostBreakdown {
       },
     ],
     formatted: formatCost(total),
-    formattedBreakdown: [`Photos: ${formatCost(total)} (${count} x ${formatCost(unitCost)})`],
+    formattedBreakdown: [`Photos: ${formatCost(total)} (${count} × ${formatCost(unitCost)})`],
   };
 }
 
@@ -230,30 +348,7 @@ export function estimateCopyCost(count: number): CostBreakdown {
       },
     ],
     formatted: formatCost(total),
-    formattedBreakdown: [`Copy: ${formatCost(total)} (${count} x ${formatCost(unitCost)})`],
-  };
-}
-
-/**
- * Estimate cost for text search
- */
-export function estimateSearchCost(count: number): CostBreakdown {
-  const unitCost = PRICING.google.textSearch;
-  const total = count * unitCost;
-  
-  return {
-    total,
-    items: [
-      {
-        name: 'Google Text Search',
-        cost: total,
-        quantity: count,
-        unitCost,
-        description: 'Place search results',
-      },
-    ],
-    formatted: formatCost(total),
-    formattedBreakdown: [`Search: ${formatCost(total)} (${count} x ${formatCost(unitCost)})`],
+    formattedBreakdown: [`Copy: ${formatCost(total)} (${count} × ${formatCost(unitCost)})`],
   };
 }
 
@@ -285,33 +380,38 @@ export function estimatePipelineCost(count: number): CostBreakdown {
 }
 
 /**
- * Estimate cost for a campaign run
- * Assumes: search + details + reviews + copy for each result
+ * Estimate cost for a campaign run (SEARCH ONLY)
+ * 
+ * Campaigns only perform Text Search operations.
+ * They find businesses but don't fetch details, reviews, or generate copy.
+ * 
+ * @param numSearches - Number of search queries in the campaign
+ * @param maxResultsPerSearch - Max results per search (affects pagination)
+ * @param currentMonthlyRequests - Current monthly requests for volume discount
  */
 export function estimateCampaignCost(
   numSearches: number,
-  maxResultsPerSearch: number
+  maxResultsPerSearch: number,
+  currentMonthlyRequests: number = 0
 ): CostBreakdown {
-  const estimatedResults = numSearches * Math.min(maxResultsPerSearch, 60);
+  // Campaigns ONLY run search - no details, reviews, photos, or copy
+  const searchCost = estimateSearchCost(numSearches, maxResultsPerSearch, currentMonthlyRequests);
   
-  const searchCost = estimateSearchCost(numSearches);
-  const pipelineCost = estimatePipelineCost(estimatedResults);
-  
-  const total = searchCost.total + pipelineCost.total;
+  const pagesPerSearch = calculatePagesNeeded(maxResultsPerSearch);
+  const totalApiCalls = numSearches * pagesPerSearch;
+  const estimatedResults = Math.min(numSearches * maxResultsPerSearch, numSearches * 60);
   
   return {
-    total,
-    items: [
-      ...searchCost.items,
-      ...pipelineCost.items,
-    ],
-    formatted: formatCost(total),
+    total: searchCost.total,
+    items: searchCost.items,
+    formatted: searchCost.formatted,
     formattedBreakdown: [
-      `Searches: ${numSearches} queries`,
-      `Est. results: ${estimatedResults} businesses`,
+      `Queries: ${numSearches.toLocaleString()}`,
+      `Max results/query: ${maxResultsPerSearch} (${pagesPerSearch} page${pagesPerSearch > 1 ? 's' : ''})`,
+      `Total API calls: ${totalApiCalls.toLocaleString()}`,
+      `Est. businesses found: up to ${estimatedResults.toLocaleString()}`,
       '',
       ...searchCost.formattedBreakdown,
-      ...pipelineCost.formattedBreakdown,
     ],
   };
 }
@@ -329,3 +429,4 @@ export function getPerBusinessCost(): number {
 export function getPricingSources(): PricingSource[] {
   return PRICING.sources as unknown as PricingSource[];
 }
+

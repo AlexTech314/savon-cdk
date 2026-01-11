@@ -376,9 +376,9 @@ export const GenerateQueriesModal: React.FC<GenerateQueriesModalProps> = ({
                   <div className="flex items-center gap-1.5 text-sm">
                     <DollarSign className="h-3.5 w-3.5 text-primary" />
                     <span className="font-medium text-primary">
-                      {estimateSearchCost(preview.queries.length).formatted}
+                      {estimateSearchCost(preview.queries.length, 20).formatted}
                     </span>
-                    <span className="text-muted-foreground text-xs">estimated</span>
+                    <span className="text-muted-foreground text-xs">estimated (20 results/query)</span>
                   </div>
                 </div>
                 

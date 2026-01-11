@@ -289,8 +289,8 @@ async function main(): Promise<void> {
   console.log(`Skip cached searches: ${skipCachedSearches}`);
   console.log(`Search cache table: ${SEARCH_CACHE_TABLE_NAME}`);
 
-  const allBusinesses: Record<string, unknown>[] = [];
   const seenPlaceIds = new Set<string>();
+  let totalSaved = 0;
   let skippedCount = 0;
 
   for (let i = 0; i < searches.length; i++) {
@@ -317,19 +317,22 @@ async function main(): Promise<void> {
       // Write to cache (always, to track when searches were last run)
       await writeSearchCache(search, places.length);
 
-      // Deduplicate by place_id
+      // Deduplicate by place_id (across all searches in this job)
       const newPlaces = places.filter(p => !seenPlaceIds.has(p.id));
       newPlaces.forEach(p => seenPlaceIds.add(p.id));
 
       console.log(`  Found ${places.length} places, ${newPlaces.length} new (after dedup)`);
 
-      // Transform to minimal search records
-      for (const place of newPlaces) {
-        const record = transformToSearchRecord(place, search);
-        allBusinesses.push(record);
+      // Transform to minimal search records and write immediately
+      if (newPlaces.length > 0) {
+        const records = newPlaces.map(place => transformToSearchRecord(place, search));
+        await writeToDynamoDB(records);
+        totalSaved += records.length;
+        console.log(`  Saved ${records.length} businesses to DynamoDB (total: ${totalSaved})`);
       }
     } catch (error) {
       console.error(`  Error processing search:`, error);
+      // Continue with next search - don't fail the entire job
     }
   }
   
@@ -337,11 +340,8 @@ async function main(): Promise<void> {
     console.log(`\n=== Skipped ${skippedCount} cached searches ===`);
   }
 
-  console.log(`\n=== Writing ${allBusinesses.length} businesses to DynamoDB ===`);
-  await writeToDynamoDB(allBusinesses);
-
   console.log('\n=== Search Task Complete ===');
-  console.log(`Total businesses saved: ${allBusinesses.length}`);
+  console.log(`Total businesses saved: ${totalSaved}`);
   console.log('Next step: Run details-task to fetch full business details');
 }
 
