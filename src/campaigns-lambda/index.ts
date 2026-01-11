@@ -7,6 +7,14 @@ import {
   DeleteCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { 
+  S3Client, 
+  PutObjectCommand, 
+  GetObjectCommand, 
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { randomUUID } from 'crypto';
 
@@ -17,7 +25,13 @@ const docClient = DynamoDBDocumentClient.from(dynamoClient, {
   },
 });
 
+const s3Client = new S3Client({});
+
 const CAMPAIGNS_TABLE_NAME = process.env.CAMPAIGNS_TABLE_NAME!;
+const CAMPAIGN_DATA_BUCKET = process.env.CAMPAIGN_DATA_BUCKET!;
+
+// Presigned URL expiration: 1 hour
+const PRESIGNED_URL_EXPIRY = 3600;
 
 interface SearchQuery {
   textQuery: string;
@@ -34,11 +48,15 @@ interface SearchQuery {
  */
 type DataTier = 'pro' | 'enterprise' | 'enterprise_atmosphere';
 
+/**
+ * Campaign stored in DynamoDB - searches are stored in S3, not here
+ */
 interface Campaign {
   campaign_id: string;
   name: string;
   description?: string;
-  searches: SearchQuery[];
+  searches_s3_key: string;  // S3 key where searches are stored
+  searches_count: number;   // Number of searches (for display without fetching S3)
   max_results_per_search: number;
   only_without_website: boolean;
   data_tier: DataTier;
@@ -47,10 +65,16 @@ interface Campaign {
   last_run_at?: string;
 }
 
+/**
+ * Campaign response includes searches fetched from S3
+ */
+interface CampaignWithSearches extends Omit<Campaign, 'searches_s3_key'> {
+  searches: SearchQuery[];
+}
+
 interface CreateCampaignInput {
   name: string;
   description?: string;
-  searches: SearchQuery[];
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
   dataTier?: DataTier;
@@ -59,10 +83,14 @@ interface CreateCampaignInput {
 interface UpdateCampaignInput {
   name?: string;
   description?: string;
-  searches?: SearchQuery[];
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
   dataTier?: DataTier;
+  updateSearches?: boolean; // If true, return presigned URL for new searches upload
+}
+
+interface ConfirmUploadInput {
+  searchesCount: number;
 }
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -99,6 +127,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await markCampaignRun(pathParameters?.campaign_id!);
     }
     
+    // POST /campaigns/{campaign_id}/confirm-upload - Confirm searches upload
+    if (routeKey === 'POST /campaigns/{campaign_id}/confirm-upload') {
+      return await confirmSearchesUpload(pathParameters?.campaign_id!, body);
+    }
+    
     return response(404, { error: 'Not found' });
   } catch (error) {
     console.error('Error:', error);
@@ -106,6 +139,64 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   }
 }
 
+/**
+ * Get S3 key for campaign searches
+ */
+function getSearchesS3Key(campaignId: string): string {
+  return `campaigns/${campaignId}/searches.json`;
+}
+
+/**
+ * Generate presigned PUT URL for uploading searches
+ */
+async function generateUploadUrl(campaignId: string): Promise<string> {
+  const command = new PutObjectCommand({
+    Bucket: CAMPAIGN_DATA_BUCKET,
+    Key: getSearchesS3Key(campaignId),
+    ContentType: 'application/json',
+  });
+  
+  return getSignedUrl(s3Client, command, { expiresIn: PRESIGNED_URL_EXPIRY });
+}
+
+/**
+ * Fetch searches from S3
+ */
+async function fetchSearchesFromS3(s3Key: string): Promise<SearchQuery[]> {
+  try {
+    const result = await s3Client.send(new GetObjectCommand({
+      Bucket: CAMPAIGN_DATA_BUCKET,
+      Key: s3Key,
+    }));
+    
+    const bodyStr = await result.Body?.transformToString();
+    if (!bodyStr) return [];
+    
+    const data = JSON.parse(bodyStr);
+    return data.searches || [];
+  } catch (error) {
+    console.error(`Failed to fetch searches from S3 (${s3Key}):`, error);
+    return [];
+  }
+}
+
+/**
+ * Delete searches from S3
+ */
+async function deleteSearchesFromS3(s3Key: string): Promise<void> {
+  try {
+    await s3Client.send(new DeleteObjectCommand({
+      Bucket: CAMPAIGN_DATA_BUCKET,
+      Key: s3Key,
+    }));
+  } catch (error) {
+    console.error(`Failed to delete searches from S3 (${s3Key}):`, error);
+  }
+}
+
+/**
+ * List all campaigns (without fetching searches from S3)
+ */
 async function listCampaigns(): Promise<APIGatewayProxyResultV2> {
   const result = await docClient.send(new ScanCommand({
     TableName: CAMPAIGNS_TABLE_NAME,
@@ -116,12 +207,29 @@ async function listCampaigns(): Promise<APIGatewayProxyResultV2> {
   // Sort by created_at descending (newest first)
   campaigns.sort((a, b) => b.created_at.localeCompare(a.created_at));
   
+  // Return campaigns with searches_count but without fetching actual searches
+  const campaignsForList = campaigns.map(c => ({
+    campaign_id: c.campaign_id,
+    name: c.name,
+    description: c.description,
+    searches_count: c.searches_count || 0,
+    max_results_per_search: c.max_results_per_search,
+    only_without_website: c.only_without_website,
+    data_tier: c.data_tier,
+    created_at: c.created_at,
+    updated_at: c.updated_at,
+    last_run_at: c.last_run_at,
+  }));
+  
   return response(200, {
-    campaigns,
-    count: campaigns.length,
+    campaigns: campaignsForList,
+    count: campaignsForList.length,
   });
 }
 
+/**
+ * Create a new campaign - returns presigned URL for uploading searches
+ */
 async function createCampaign(body?: string): Promise<APIGatewayProxyResultV2> {
   if (!body) {
     return response(400, { error: 'Request body required' });
@@ -134,15 +242,12 @@ async function createCampaign(body?: string): Promise<APIGatewayProxyResultV2> {
     return response(400, { error: 'Campaign name is required' });
   }
   
-  if (!input.searches || input.searches.length === 0) {
-    return response(400, { error: 'At least one search query is required' });
-  }
-  
   const now = new Date().toISOString();
+  const campaignId = randomUUID();
   
   // Validate data tier
   const validTiers: DataTier[] = ['pro', 'enterprise', 'enterprise_atmosphere'];
-  const dataTier = input.dataTier || 'enterprise'; // Default to enterprise for balance of cost/data
+  const dataTier = input.dataTier || 'enterprise';
   if (!validTiers.includes(dataTier)) {
     return response(400, { 
       error: 'Invalid dataTier', 
@@ -150,12 +255,15 @@ async function createCampaign(body?: string): Promise<APIGatewayProxyResultV2> {
     });
   }
 
+  const s3Key = getSearchesS3Key(campaignId);
+  
   const campaign: Campaign = {
-    campaign_id: randomUUID(),
+    campaign_id: campaignId,
     name: input.name.trim(),
     description: input.description?.trim(),
-    searches: input.searches,
-    max_results_per_search: Math.min(input.maxResultsPerSearch ?? 60, 60), // Google API limit
+    searches_s3_key: s3Key,
+    searches_count: 0, // Will be updated after upload confirmation
+    max_results_per_search: Math.min(input.maxResultsPerSearch ?? 60, 60),
     only_without_website: input.onlyWithoutWebsite ?? true,
     data_tier: dataTier,
     created_at: now,
@@ -167,9 +275,22 @@ async function createCampaign(body?: string): Promise<APIGatewayProxyResultV2> {
     Item: campaign,
   }));
   
-  return response(201, { campaign });
+  // Generate presigned URL for uploading searches
+  const uploadUrl = await generateUploadUrl(campaignId);
+  
+  return response(201, { 
+    campaign: {
+      ...campaign,
+      searches: [], // No searches yet
+    },
+    uploadUrl,
+    message: 'Campaign created. Upload searches to the provided URL, then call confirm-upload.',
+  });
 }
 
+/**
+ * Get a single campaign with searches fetched from S3
+ */
 async function getCampaign(campaignId: string): Promise<APIGatewayProxyResultV2> {
   const result = await docClient.send(new GetCommand({
     TableName: CAMPAIGNS_TABLE_NAME,
@@ -180,9 +301,32 @@ async function getCampaign(campaignId: string): Promise<APIGatewayProxyResultV2>
     return response(404, { error: 'Campaign not found' });
   }
   
-  return response(200, { campaign: result.Item });
+  const campaign = result.Item as Campaign;
+  
+  // Fetch searches from S3
+  const searches = await fetchSearchesFromS3(campaign.searches_s3_key);
+  
+  // Return campaign with searches
+  const campaignWithSearches: CampaignWithSearches = {
+    campaign_id: campaign.campaign_id,
+    name: campaign.name,
+    description: campaign.description,
+    searches,
+    searches_count: campaign.searches_count,
+    max_results_per_search: campaign.max_results_per_search,
+    only_without_website: campaign.only_without_website,
+    data_tier: campaign.data_tier,
+    created_at: campaign.created_at,
+    updated_at: campaign.updated_at,
+    last_run_at: campaign.last_run_at,
+  };
+  
+  return response(200, { campaign: campaignWithSearches });
 }
 
+/**
+ * Update a campaign - returns presigned URL if updateSearches is true
+ */
 async function updateCampaign(campaignId: string, body?: string): Promise<APIGatewayProxyResultV2> {
   if (!body) {
     return response(400, { error: 'Request body required' });
@@ -218,16 +362,10 @@ async function updateCampaign(campaignId: string, body?: string): Promise<APIGat
     expressionValues[':description'] = input.description?.trim() || null;
   }
   
-  if (input.searches !== undefined) {
-    updateParts.push('#searches = :searches');
-    expressionNames['#searches'] = 'searches';
-    expressionValues[':searches'] = input.searches;
-  }
-  
   if (input.maxResultsPerSearch !== undefined) {
     updateParts.push('#max_results = :max_results');
     expressionNames['#max_results'] = 'max_results_per_search';
-    expressionValues[':max_results'] = input.maxResultsPerSearch;
+    expressionValues[':max_results'] = Math.min(input.maxResultsPerSearch, 60);
   }
   
   if (input.onlyWithoutWebsite !== undefined) {
@@ -258,9 +396,105 @@ async function updateCampaign(campaignId: string, body?: string): Promise<APIGat
     ReturnValues: 'ALL_NEW',
   }));
   
-  return response(200, { campaign: result.Attributes });
+  const updatedCampaign = result.Attributes as Campaign;
+  
+  // If updateSearches is requested, return presigned URL
+  let uploadUrl: string | undefined;
+  if (input.updateSearches) {
+    uploadUrl = await generateUploadUrl(campaignId);
+  }
+  
+  // Fetch current searches for the response
+  const searches = await fetchSearchesFromS3(updatedCampaign.searches_s3_key);
+  
+  const responseData: Record<string, unknown> = {
+    campaign: {
+      ...updatedCampaign,
+      searches,
+    },
+  };
+  
+  if (uploadUrl) {
+    responseData.uploadUrl = uploadUrl;
+    responseData.message = 'Upload new searches to the provided URL, then call confirm-upload.';
+  }
+  
+  return response(200, responseData);
 }
 
+/**
+ * Confirm that searches have been uploaded to S3
+ */
+async function confirmSearchesUpload(campaignId: string, body?: string): Promise<APIGatewayProxyResultV2> {
+  if (!body) {
+    return response(400, { error: 'Request body required' });
+  }
+  
+  const input = JSON.parse(body) as ConfirmUploadInput;
+  
+  if (typeof input.searchesCount !== 'number' || input.searchesCount < 0) {
+    return response(400, { error: 'searchesCount is required and must be a non-negative number' });
+  }
+  
+  // Verify campaign exists
+  const existing = await docClient.send(new GetCommand({
+    TableName: CAMPAIGNS_TABLE_NAME,
+    Key: { campaign_id: campaignId },
+  }));
+  
+  if (!existing.Item) {
+    return response(404, { error: 'Campaign not found' });
+  }
+  
+  const campaign = existing.Item as Campaign;
+  
+  // Verify the S3 object exists
+  try {
+    await s3Client.send(new HeadObjectCommand({
+      Bucket: CAMPAIGN_DATA_BUCKET,
+      Key: campaign.searches_s3_key,
+    }));
+  } catch {
+    return response(400, { 
+      error: 'Searches file not found in S3',
+      details: 'Please upload the searches file before confirming.',
+    });
+  }
+  
+  // Update the searches count
+  const now = new Date().toISOString();
+  const result = await docClient.send(new UpdateCommand({
+    TableName: CAMPAIGNS_TABLE_NAME,
+    Key: { campaign_id: campaignId },
+    UpdateExpression: 'SET #count = :count, #updated = :updated',
+    ExpressionAttributeNames: {
+      '#count': 'searches_count',
+      '#updated': 'updated_at',
+    },
+    ExpressionAttributeValues: {
+      ':count': input.searchesCount,
+      ':updated': now,
+    },
+    ReturnValues: 'ALL_NEW',
+  }));
+  
+  const updatedCampaign = result.Attributes as Campaign;
+  
+  // Fetch searches for response
+  const searches = await fetchSearchesFromS3(updatedCampaign.searches_s3_key);
+  
+  return response(200, { 
+    campaign: {
+      ...updatedCampaign,
+      searches,
+    },
+    message: 'Searches upload confirmed.',
+  });
+}
+
+/**
+ * Delete a campaign and its S3 data
+ */
 async function deleteCampaign(campaignId: string): Promise<APIGatewayProxyResultV2> {
   // Check if campaign exists first
   const existing = await docClient.send(new GetCommand({
@@ -272,6 +506,12 @@ async function deleteCampaign(campaignId: string): Promise<APIGatewayProxyResult
     return response(404, { error: 'Campaign not found' });
   }
   
+  const campaign = existing.Item as Campaign;
+  
+  // Delete S3 object
+  await deleteSearchesFromS3(campaign.searches_s3_key);
+  
+  // Delete DynamoDB item
   await docClient.send(new DeleteCommand({
     TableName: CAMPAIGNS_TABLE_NAME,
     Key: { campaign_id: campaignId },

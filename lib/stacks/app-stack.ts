@@ -96,6 +96,16 @@ export class AppStack extends cdk.Stack {
     });
 
     // ============================================================
+    // S3 Bucket for Campaign Data (search queries)
+    // ============================================================
+    const campaignDataBucket = new s3.Bucket(this, 'CampaignDataBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.RETAIN, // Keep data on stack deletion
+      versioned: true, // Enable versioning for safety
+    });
+
+    // ============================================================
     // Search Task Definition (Google Places Text Search - Pro tier)
     // ============================================================
     const searchTaskDef = new ecs.FargateTaskDefinition(this, 'SearchTaskDef', {
@@ -115,12 +125,14 @@ export class AppStack extends cdk.Stack {
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         SEARCH_CACHE_TABLE_NAME: searchCacheTable.tableName,
+        CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
         AWS_REGION: this.region,
       },
     });
 
     businessesTable.grantReadWriteData(searchTaskDef.taskRole);
     searchCacheTable.grantReadWriteData(searchTaskDef.taskRole);
+    campaignDataBucket.grantRead(searchTaskDef.taskRole);
 
     // ============================================================
     // Details Task Definition (Google Places Details - Enterprise tier)
@@ -468,6 +480,7 @@ export class AppStack extends cdk.Stack {
       logGroup: campaignsLogGroup,
       environment: {
         CAMPAIGNS_TABLE_NAME: campaignsTable.tableName,
+        CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
       },
       bundling: {
         minify: true,
@@ -476,6 +489,7 @@ export class AppStack extends cdk.Stack {
     });
 
     campaignsTable.grantReadWriteData(campaignsLambda);
+    campaignDataBucket.grantReadWrite(campaignsLambda);
 
     // ============================================================
     // API Gateway with Custom Domain
@@ -667,6 +681,13 @@ export class AppStack extends cdk.Stack {
       authorizer,
     });
 
+    httpApi.addRoutes({
+      path: '/campaigns/{campaign_id}/confirm-upload',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: campaignsIntegration,
+      authorizer,
+    });
+
     // ============================================================
     // S3 Buckets + CloudFront Distributions with Custom Domains
     // ============================================================
@@ -840,6 +861,11 @@ export class AppStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'AdminBucketName', {
       value: adminBucket.bucketName,
       description: 'Admin Control Center S3 bucket for deployment',
+    });
+
+    new cdk.CfnOutput(this, 'CampaignDataBucketName', {
+      value: campaignDataBucket.bucketName,
+      description: 'S3 bucket for campaign search queries',
     });
 
     new cdk.CfnOutput(this, 'StateMachineArn', {

@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, BatchWriteCommand, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import * as crypto from 'crypto';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
@@ -9,9 +10,12 @@ const docClient = DynamoDBDocumentClient.from(dynamoClient, {
   },
 });
 
+const s3Client = new S3Client({ region: process.env.AWS_REGION });
+
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const SEARCH_CACHE_TABLE_NAME = process.env.SEARCH_CACHE_TABLE_NAME!;
+const CAMPAIGN_DATA_BUCKET = process.env.CAMPAIGN_DATA_BUCKET!;
 
 // TTL for search cache: 30 days
 const CACHE_TTL_DAYS = 30;
@@ -72,8 +76,8 @@ interface JobInput {
   runPhotos?: boolean;
   runCopy?: boolean;
   
-  // Search input
-  searches?: SearchQuery[];
+  // Search input - searches are stored in S3
+  searchesS3Key?: string;  // S3 key to fetch searches from
   maxResultsPerSearch?: number;
   dataTier?: DataTier;
   
@@ -621,6 +625,34 @@ const TIER_DESCRIPTIONS: Record<DataTier, string> = {
   enterprise_atmosphere: 'Enterprise+Atmosphere ($40/1000) - Enterprise + reviews, atmosphere',
 };
 
+/**
+ * Fetch searches from S3
+ */
+async function fetchSearchesFromS3(s3Key: string): Promise<SearchQuery[]> {
+  console.log(`Fetching searches from S3: ${CAMPAIGN_DATA_BUCKET}/${s3Key}`);
+  
+  try {
+    const result = await s3Client.send(new GetObjectCommand({
+      Bucket: CAMPAIGN_DATA_BUCKET,
+      Key: s3Key,
+    }));
+    
+    const bodyStr = await result.Body?.transformToString();
+    if (!bodyStr) {
+      console.error('S3 object body is empty');
+      return [];
+    }
+    
+    const data = JSON.parse(bodyStr);
+    const searches = data.searches || [];
+    console.log(`Loaded ${searches.length} searches from S3`);
+    return searches;
+  } catch (error) {
+    console.error(`Failed to fetch searches from S3 (${s3Key}):`, error);
+    throw error;
+  }
+}
+
 async function main(): Promise<void> {
   // Parse job input from environment
   const jobInputStr = process.env.JOB_INPUT;
@@ -636,7 +668,7 @@ async function main(): Promise<void> {
   }
 
   const { 
-    searches = [], 
+    searchesS3Key,
     maxResultsPerSearch = 60,
     skipCachedSearches = false,
     dataTier = 'enterprise',
@@ -645,8 +677,16 @@ async function main(): Promise<void> {
   console.log(`=== Search Task - ${TIER_DESCRIPTIONS[dataTier]} ===`);
   console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
 
+  // Fetch searches from S3
+  if (!searchesS3Key) {
+    console.error('No searchesS3Key provided in job input');
+    process.exit(1);
+  }
+
+  const searches = await fetchSearchesFromS3(searchesS3Key);
+
   if (searches.length === 0) {
-    console.error('No searches provided in job input');
+    console.error('No searches found in S3 file');
     process.exit(1);
   }
 

@@ -27,11 +27,6 @@ const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME!;
 const STATE_MACHINE_ARN = process.env.STATE_MACHINE_ARN!;
 const CAMPAIGNS_TABLE_NAME = process.env.CAMPAIGNS_TABLE_NAME!;
 
-interface SearchQuery {
-  textQuery: string;
-  includedType?: string;
-}
-
 /**
  * Data tier determines which Google Places API fields are fetched during search.
  * 
@@ -41,10 +36,14 @@ interface SearchQuery {
  */
 type DataTier = 'pro' | 'enterprise' | 'enterprise_atmosphere';
 
+/**
+ * Campaign stored in DynamoDB - searches are stored in S3
+ */
 interface Campaign {
   campaign_id: string;
   name: string;
-  searches: SearchQuery[];
+  searches_s3_key: string;  // S3 key where searches are stored
+  searches_count: number;   // Number of searches
   max_results_per_search: number;
   only_without_website: boolean;
   data_tier?: DataTier;
@@ -60,7 +59,7 @@ interface JobInput {
   // Campaign fields (optional for pipeline jobs)
   campaignId?: string;
   jobType: 'places' | 'pipeline';
-  searches?: SearchQuery[];
+  searchesS3Key?: string;  // S3 key for searches (search-task will fetch from S3)
   maxResultsPerSearch?: number;
   onlyWithoutWebsite?: boolean;
   dataTier?: DataTier;
@@ -313,6 +312,14 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
   
   const campaign = campaignResult.Item as Campaign;
   
+  // Check that campaign has searches uploaded
+  if (!campaign.searches_s3_key) {
+    return response(400, { 
+      error: 'Campaign has no searches configured',
+      details: 'Please upload searches before running the campaign.',
+    });
+  }
+  
   // Build job input from campaign
   // Campaigns only run search to find new businesses
   const dataTier = campaign.data_tier || 'enterprise';
@@ -320,7 +327,7 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
   const jobInput: JobInput = {
     campaignId: campaign.campaign_id,
     jobType: 'places',
-    searches: campaign.searches,
+    searchesS3Key: campaign.searches_s3_key,  // Search task will fetch from S3
     maxResultsPerSearch: campaign.max_results_per_search,
     onlyWithoutWebsite: campaign.only_without_website,
     dataTier,
