@@ -187,19 +187,19 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
   const campaign = campaignResult.Item as Campaign;
   
   // Build job input from campaign
-  // Default: run search and details to find and populate new businesses
+  // Campaigns only run search to find new businesses
   const jobInput: JobInput = {
     campaignId: campaign.campaign_id,
     jobType: 'places', // All campaign jobs are places (lead finding)
     searches: campaign.searches,
     maxResultsPerSearch: campaign.max_results_per_search,
     onlyWithoutWebsite: campaign.only_without_website,
-    // Pipeline flags - search + details by default for campaigns
+    // Pipeline flags - only search for campaigns
     runSearch: true,
-    runDetails: true,
-    runEnrich: false,  // Reviews - optional, costs extra
-    runPhotos: false,  // Photos - optional, costs extra
-    runCopy: false,    // LLM copy - optional, costs extra
+    runDetails: false,
+    runEnrich: false,
+    runPhotos: false,
+    runCopy: false,
   };
   
   // Generate job ID
