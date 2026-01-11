@@ -26,6 +26,7 @@ export interface AppStackProps extends cdk.StackProps {
   businessesTable: dynamodb.ITable;
   jobsTable: dynamodb.ITable;
   campaignsTable: dynamodb.ITable;
+  searchCacheTable: dynamodb.ITable;
   hostedZoneId: string;
   hostedZoneName: string;
   certificateArn: string;
@@ -35,7 +36,7 @@ export class AppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: AppStackProps) {
     super(scope, id, props);
 
-    const { businessesTable, jobsTable, campaignsTable, hostedZoneId, hostedZoneName, certificateArn } = props;
+    const { businessesTable, jobsTable, campaignsTable, searchCacheTable, hostedZoneId, hostedZoneName, certificateArn } = props;
 
     // Import DNS resources from the separately deployed DnsStack
     const hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, 'ImportedHostedZone', {
@@ -113,11 +114,13 @@ export class AppStack extends cdk.Stack {
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        SEARCH_CACHE_TABLE_NAME: searchCacheTable.tableName,
         AWS_REGION: this.region,
       },
     });
 
     businessesTable.grantReadWriteData(searchTaskDef.taskRole);
+    searchCacheTable.grantReadWriteData(searchTaskDef.taskRole);
 
     // ============================================================
     // Details Task Definition (Google Places Details - Enterprise tier)

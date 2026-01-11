@@ -48,6 +48,7 @@ import {
   Search,
   Loader2,
   Megaphone,
+  RefreshCw,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -86,11 +87,14 @@ const Campaigns: React.FC = () => {
   });
 
   const runMutation = useMutation({
-    mutationFn: runCampaign,
-    onSuccess: (job) => {
+    mutationFn: (options: { campaignId: string; skipCachedSearches: boolean }) => 
+      runCampaign(options),
+    onSuccess: (job, variables) => {
       toast({
         title: 'Campaign Started',
-        description: `Job ${job.job_id} is now running.`,
+        description: variables.skipCachedSearches
+          ? `Job ${job.job_id} is running (skipping cached searches).`
+          : `Job ${job.job_id} is running (fresh search - all queries).`,
       });
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       queryClient.invalidateQueries({ queryKey: ['jobs'] });
@@ -235,11 +239,24 @@ const Campaigns: React.FC = () => {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            onClick={() => runMutation.mutate(campaign.campaign_id)}
+                            onClick={() => runMutation.mutate({ 
+                              campaignId: campaign.campaign_id, 
+                              skipCachedSearches: true 
+                            })}
                             disabled={runMutation.isPending}
                           >
                             <Play className="h-4 w-4 mr-2" />
-                            Run Campaign
+                            Run (skip cached)
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => runMutation.mutate({ 
+                              campaignId: campaign.campaign_id, 
+                              skipCachedSearches: false 
+                            })}
+                            disabled={runMutation.isPending}
+                          >
+                            <RefreshCw className="h-4 w-4 mr-2" />
+                            Run (fresh search)
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleEdit(campaign)}>
                             <Pencil className="h-4 w-4 mr-2" />

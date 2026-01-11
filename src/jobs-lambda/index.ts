@@ -59,6 +59,8 @@ interface JobInput {
   skipWithWebsite?: boolean;
   // Filter rules - only process businesses matching ALL rules
   filterRules?: FilterRule[];
+  // Search cache options
+  skipCachedSearches?: boolean; // Skip searches run in the last 30 days
 }
 
 interface Job {
@@ -182,6 +184,7 @@ interface PipelineJobRequest {
 
 interface CampaignJobRequest {
   campaignId: string;
+  skipCachedSearches?: boolean; // Skip searches run in the last 30 days
 }
 
 type StartJobRequest = PipelineJobRequest | CampaignJobRequest;
@@ -275,7 +278,7 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
 }
 
 async function startCampaignJob(request: CampaignJobRequest): Promise<APIGatewayProxyResultV2> {
-  const { campaignId } = request;
+  const { campaignId, skipCachedSearches = true } = request; // Default to skipping cached searches
   
   if (!campaignId) {
     return response(400, { 
@@ -309,6 +312,8 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     runEnrich: false,
     runPhotos: false,
     runCopy: false,
+    // Cache options
+    skipCachedSearches,
   };
   
   // Generate job ID
@@ -330,7 +335,7 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     created_at: createdAt,
     status: 'RUNNING',
     job_type: 'places',
-    job_name: `Campaign: ${campaign.name}`,
+    job_name: `Campaign: ${campaign.name}${skipCachedSearches ? '' : ' (fresh)'}`,
     campaign_id: campaign.campaign_id,
     campaign_name: campaign.name,
     execution_arn: startResult.executionArn,

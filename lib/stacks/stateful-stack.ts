@@ -6,6 +6,7 @@ export class StatefulStack extends cdk.Stack {
   public readonly businessesTable: dynamodb.Table;
   public readonly jobsTable: dynamodb.Table;
   public readonly campaignsTable: dynamodb.Table;
+  public readonly searchCacheTable: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -76,6 +77,19 @@ export class StatefulStack extends cdk.Stack {
     });
 
     // ============================================================
+    // Search Cache Table (for deduplicating search queries)
+    // ============================================================
+    this.searchCacheTable = new dynamodb.Table(this, 'SearchCache', {
+      // Partition key is hash of search query (textQuery + includedType)
+      partitionKey: { name: 'query_hash', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      // TTL for automatic cleanup after 30 days
+      timeToLiveAttribute: 'ttl',
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // ============================================================
     // Outputs
     // ============================================================
     new cdk.CfnOutput(this, 'BusinessesTableName', {
@@ -96,6 +110,11 @@ export class StatefulStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'CampaignsTableName', {
       value: this.campaignsTable.tableName,
       exportName: `${cdk.Aws.STACK_NAME}-CampaignsTableName`,
+    });
+
+    new cdk.CfnOutput(this, 'SearchCacheTableName', {
+      value: this.searchCacheTable.tableName,
+      exportName: `${cdk.Aws.STACK_NAME}-SearchCacheTableName`,
     });
   }
 }

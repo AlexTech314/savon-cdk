@@ -364,16 +364,22 @@ export const getJob = async (job_id: string): Promise<Job | null> => {
 };
 
 // Start a job from a campaign
-export const startJob = async (campaignId: string): Promise<Job> => {
+export interface StartJobOptions {
+  campaignId: string;
+  skipCachedSearches?: boolean; // Default true - skip searches run in last 30 days
+}
+
+export const startJob = async (options: StartJobOptions): Promise<Job> => {
+  const { campaignId, skipCachedSearches = true } = options;
   const response = await apiClient<{ job: BackendJob; message: string }>(
     '/jobs',
     {
       method: 'POST',
-      body: JSON.stringify({ campaignId }),
+      body: JSON.stringify({ campaignId, skipCachedSearches }),
       requiresAuth: true,
     }
   );
-  
+
   return transformJob(response.job);
 };
 
@@ -768,7 +774,15 @@ export const deleteCampaign = async (campaignId: string): Promise<boolean> => {
   }
 };
 
-export const runCampaign = async (campaignId: string): Promise<Job> => {
+export interface RunCampaignOptions {
+  campaignId: string;
+  skipCachedSearches?: boolean; // Default true - skip searches run in last 30 days
+}
+
+export const runCampaign = async (options: RunCampaignOptions): Promise<Job> => {
   // Starting a job from a campaign
-  return startJob(campaignId);
+  return startJob({
+    campaignId: options.campaignId,
+    skipCachedSearches: options.skipCachedSearches ?? true,
+  });
 };

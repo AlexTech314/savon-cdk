@@ -23,6 +23,7 @@ export class AlphaStage extends cdk.Stage {
       businessesTable: statefulStack.businessesTable,
       jobsTable: statefulStack.jobsTable,
       campaignsTable: statefulStack.campaignsTable,
+      searchCacheTable: statefulStack.searchCacheTable,
       hostedZoneId: props.hostedZoneId,
       hostedZoneName: props.hostedZoneName,
       certificateArn: props.certificateArn,
