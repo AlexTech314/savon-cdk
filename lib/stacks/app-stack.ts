@@ -290,6 +290,8 @@ export class AppStack extends cdk.Stack {
       bundling: {
         minify: true,
         sourceMap: true,
+        // Include @anthropic-ai/sdk in the bundle (npm install in output)
+        nodeModules: ['@anthropic-ai/sdk'],
       },
     });
 
