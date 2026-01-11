@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { createCampaign, updateCampaign } from '@/lib/api';
 import { Campaign, CampaignInput, PLACE_TYPES, SearchQuery } from '@/types/jobs';
+import { GenerateQueriesModal } from './GenerateQueriesModal';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -17,7 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Trash2, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Loader2, Sparkles } from 'lucide-react';
 
 interface CampaignFormProps {
   campaign?: Campaign | null;
@@ -45,6 +46,7 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
   const [onlyWithoutWebsite, setOnlyWithoutWebsite] = useState(
     campaign?.only_without_website ?? true
   );
+  const [generateModalOpen, setGenerateModalOpen] = useState(false);
 
   // Group place types by category
   const groupedTypes = useMemo(() => {
@@ -105,6 +107,21 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
     const updated = [...searches];
     updated[index] = { ...updated[index], [field]: value };
     setSearches(updated);
+  };
+
+  const handleGeneratedQueries = (queries: { textQuery: string; includedType: string }[]) => {
+    // Filter out empty existing searches and append generated ones
+    const existingValid = searches.filter(s => s.textQuery.trim());
+    const newSearches = queries.map(q => ({
+      textQuery: q.textQuery,
+      includedType: q.includedType,
+    }));
+    setSearches([...existingValid, ...newSearches]);
+    
+    toast({
+      title: 'Queries Generated',
+      description: `Added ${queries.length} search queries to the campaign.`,
+    });
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -181,8 +198,16 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
         <div className="space-y-2">
           <Label>Search Queries *</Label>
           <p className="text-sm text-muted-foreground">
-            Use descriptive queries like "plumbers in Alabama" or "electricians near Austin TX".
-            The type filter narrows results but won't work well with vague queries like just a state name.
+            Use city-level queries for best results (up to 60 results each). Example: "plumbers in Houston TX".
+            State-level queries return fewer results. For a list of US cities, see{' '}
+            <a 
+              href="https://simplemaps.com/data/us-cities" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              simplemaps.com/data/us-cities
+            </a>.
           </p>
         </div>
 
@@ -231,11 +256,28 @@ export const CampaignForm: React.FC<CampaignFormProps> = ({
           ))}
         </div>
 
-        <Button type="button" variant="outline" onClick={addSearch} className="gap-2">
-          <Plus className="h-4 w-4" />
-          Add Search
-        </Button>
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" onClick={addSearch} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Add Search
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setGenerateModalOpen(true)}
+            className="gap-2"
+          >
+            <Sparkles className="h-4 w-4" />
+            Generate from Cities
+          </Button>
+        </div>
       </div>
+
+      <GenerateQueriesModal
+        open={generateModalOpen}
+        onClose={() => setGenerateModalOpen(false)}
+        onGenerate={handleGeneratedQueries}
+      />
 
       {/* Settings */}
       <div className="grid grid-cols-2 gap-4 pt-4 border-t border-border">
