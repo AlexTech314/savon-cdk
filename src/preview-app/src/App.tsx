@@ -241,7 +241,6 @@ export default function App() {
           hero={data.hero}
           heroImage={data.heroImage}
           rating={data.rating}
-          ratingCount={data.ratingCount}
           phone={data.phone}
         />
 
@@ -254,7 +253,6 @@ export default function App() {
         <Reviews
           reviewsSection={data.reviewsSection}
           rating={data.rating}
-          ratingCount={data.ratingCount}
         />
 
         <EmergencyCTA emergencyCta={data.emergencyCta} phone={data.phone} />

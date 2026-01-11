@@ -14,10 +14,9 @@ interface ReviewsProps {
     }[];
   };
   rating: number;
-  ratingCount: number;
 }
 
-export function Reviews({ reviewsSection, rating, ratingCount }: ReviewsProps) {
+export function Reviews({ reviewsSection, rating }: ReviewsProps) {
   return (
     <section id="reviews" className="py-20 bg-gray-section">
       <div className="container mx-auto px-4">
@@ -31,7 +30,7 @@ export function Reviews({ reviewsSection, rating, ratingCount }: ReviewsProps) {
           </h2>
 
           {/* Rating Display */}
-          <div className="flex items-center justify-center gap-3 mb-4">
+          <div className="flex items-center justify-center gap-3">
             <div className="flex items-center gap-1">
               {[...Array(5)].map((_, i) => (
                 <Star
@@ -45,12 +44,9 @@ export function Reviews({ reviewsSection, rating, ratingCount }: ReviewsProps) {
               ))}
             </div>
             <span className="text-2xl font-bold text-foreground">
-              {rating}/5
+              5-Star Rated
             </span>
           </div>
-          <p className="text-muted-foreground">
-            Based on {ratingCount}+ Google Reviews
-          </p>
         </div>
 
         {/* Reviews Grid */}

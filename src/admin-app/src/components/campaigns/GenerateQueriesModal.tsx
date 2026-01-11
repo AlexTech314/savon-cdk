@@ -41,15 +41,24 @@ const CITY_LIMITS = [
   { value: -1, label: 'All cities (no limit)' },
 ];
 
+// US states only (excludes DC, PR, and territories)
+const US_STATES_ONLY = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+];
+
 // Regional presets for quick selection
 const REGIONAL_PRESETS = {
   all: {
     label: 'All 50 States',
-    states: [] as string[], // Will be populated with all states
+    states: US_STATES_ONLY,
   },
   continental: {
-    label: 'Continental US (48)',
-    excludes: ['AK', 'HI'],
+    label: 'Continental (48)',
+    states: US_STATES_ONLY.filter(s => s !== 'AK' && s !== 'HI'),
   },
   eastCoast: {
     label: 'East Coast',
@@ -135,13 +144,8 @@ export const GenerateQueriesModal: React.FC<GenerateQueriesModalProps> = ({
     const preset = REGIONAL_PRESETS[presetKey];
     const allStateIds = states.map(s => s.id);
     
-    if (presetKey === 'all') {
-      setSelectedStates(allStateIds);
-    } else if ('excludes' in preset) {
-      // Continental US - all except excluded
-      setSelectedStates(allStateIds.filter(id => !preset.excludes.includes(id)));
-    } else if ('states' in preset) {
-      // Regional preset - specific states
+    // All presets now use explicit state lists
+    if ('states' in preset) {
       setSelectedStates(preset.states.filter(id => allStateIds.includes(id)));
     }
   };

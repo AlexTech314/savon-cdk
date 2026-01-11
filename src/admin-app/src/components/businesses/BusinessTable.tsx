@@ -34,7 +34,6 @@ import {
   ArrowUpDown,
   Loader2,
   ExternalLink,
-  Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -135,31 +134,12 @@ const PipelineStatusBadge: React.FC<{
 // Pipeline status display component with clickable badges
 const PipelineStatus: React.FC<{ 
   business: Business;
-  onStepComplete: () => void;
+  onStepComplete: (stepDoneKey: keyof Business) => void;
 }> = ({ business, onStepComplete }) => {
   const { toast } = useToast();
   const [loadingStep, setLoadingStep] = useState<PipelineStep | null>(null);
 
-  // If business has a website, show a different indicator
-  if (business.has_website) {
-    return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Badge variant="secondary" className="gap-1 text-xs">
-              <Globe className="h-3 w-3" />
-              Website
-            </Badge>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Business has a website - excluded from pipeline</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  }
-
-  const handleRunStep = async (step: PipelineStep) => {
+  const handleRunStep = async (step: PipelineStep, stepDoneKey: keyof Business) => {
     setLoadingStep(step);
     try {
       switch (step) {
@@ -183,7 +163,8 @@ const PipelineStatus: React.FC<{
           toast({ title: 'Not Supported', description: 'This step cannot be run individually', variant: 'destructive' });
           return;
       }
-      onStepComplete();
+      // Only update the specific step that was completed
+      onStepComplete(stepDoneKey);
     } catch (error) {
       console.error(`Failed to run ${step}:`, error);
       toast({ 
@@ -219,7 +200,7 @@ const PipelineStatus: React.FC<{
             tooltip={tooltip}
             canRun={canRun}
             isLoading={loadingStep === step.id}
-            onClick={canRun && !isDone ? () => handleRunStep(step.id) : undefined}
+            onClick={canRun && !isDone ? () => handleRunStep(step.id, step.doneKey) : undefined}
           />
         );
       })}
@@ -387,7 +368,23 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                 <TableCell onClick={(e) => e.stopPropagation()}>
                   <PipelineStatus 
                     business={business} 
-                    onStepComplete={() => queryClient.invalidateQueries({ queryKey: ['businesses'] })}
+                    onStepComplete={(stepDoneKey) => {
+                      // Update only the specific business in the cache
+                      queryClient.setQueriesData<{ businesses: Business[]; total: number; page: number; totalPages: number }>(
+                        { queryKey: ['businesses'] },
+                        (oldData) => {
+                          if (!oldData) return oldData;
+                          return {
+                            ...oldData,
+                            businesses: oldData.businesses.map((b) =>
+                              b.place_id === business.place_id
+                                ? { ...b, [stepDoneKey]: true }
+                                : b
+                            ),
+                          };
+                        }
+                      );
+                    }}
                   />
                 </TableCell>
                 <TableCell onClick={(e) => e.stopPropagation()}>

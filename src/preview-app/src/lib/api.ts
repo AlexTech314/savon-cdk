@@ -208,11 +208,13 @@ function formatHoursDisplay(hours: { day: string; time: string; isClosed: boolea
 function parseReviews(reviewsString?: string): { text: string; rating: number; author: string; url?: string }[] {
   if (!reviewsString) return [];
 
+  let allReviews: { text: string; rating: number; author: string; url?: string }[] = [];
+
   try {
     // Try parsing as JSON first (new format)
     const parsed = JSON.parse(reviewsString);
     if (Array.isArray(parsed)) {
-      return parsed.slice(0, 3).map((r: { text?: string; authorDisplayName?: string; rating?: number; authorUri?: string }) => ({
+      allReviews = parsed.map((r: { text?: string; authorDisplayName?: string; rating?: number; authorUri?: string }) => ({
         text: r.text || '',
         rating: r.rating || 5,
         author: r.authorDisplayName || 'Verified Customer',
@@ -221,33 +223,55 @@ function parseReviews(reviewsString?: string): { text: string; rating: number; a
     }
   } catch {
     // Fall back to pipe-separated format
-  }
+    const reviewParts = reviewsString.split(" | ");
 
-  const reviews: { text: string; rating: number; author: string; url?: string }[] = [];
-  const reviewParts = reviewsString.split(" | ");
+    for (const part of reviewParts) {
+      const ratingMatch = part.match(/\[(\d)★\]/);
+      const rating = ratingMatch ? parseInt(ratingMatch[1]) : 5;
 
-  for (const part of reviewParts) {
-    const ratingMatch = part.match(/\[(\d)★\]/);
-    const rating = ratingMatch ? parseInt(ratingMatch[1]) : 5;
+      const authorMatch = part.match(/— ([^(]+)\s*\(([^)]+)\)/);
+      const author = authorMatch ? authorMatch[1].trim() : "Verified Customer";
+      const url = authorMatch ? authorMatch[2].trim() : undefined;
 
-    const authorMatch = part.match(/— ([^(]+)\s*\(([^)]+)\)/);
-    const author = authorMatch ? authorMatch[1].trim() : "Verified Customer";
-    const url = authorMatch ? authorMatch[2].trim() : undefined;
+      const textMatch = part.match(/"([^"]+)"/);
+      let text = textMatch ? textMatch[1] : part;
 
-    const textMatch = part.match(/"([^"]+)"/);
-    let text = textMatch ? textMatch[1] : part;
+      text = text.substring(0, 300);
+      if (text.length === 300) {
+        text = text.substring(0, text.lastIndexOf(" ")) + "...";
+      }
 
-    text = text.substring(0, 300);
-    if (text.length === 300) {
-      text = text.substring(0, text.lastIndexOf(" ")) + "...";
-    }
-
-    if (text.length > 20) {
-      reviews.push({ text, rating, author, url });
+      if (text.length > 20) {
+        allReviews.push({ text, rating, author, url });
+      }
     }
   }
 
-  return reviews.slice(0, 3);
+  // Filter: Only 4+ star reviews, prioritize 5-star with decent text (50+ chars)
+  const MIN_DECENT_TEXT_LENGTH = 50;
+  
+  // Get 5-star reviews with decent text
+  const fiveStarWithText = allReviews.filter(
+    r => r.rating === 5 && r.text.length >= MIN_DECENT_TEXT_LENGTH
+  );
+  
+  // If we have at least 3 good 5-star reviews, use only those
+  if (fiveStarWithText.length >= 3) {
+    return fiveStarWithText.slice(0, 3);
+  }
+  
+  // Otherwise, include 4-star reviews as fallback (still with decent text)
+  const fourOrFiveStarWithText = allReviews.filter(
+    r => r.rating >= 4 && r.text.length >= MIN_DECENT_TEXT_LENGTH
+  );
+  
+  // Sort by rating (5-star first), then by text length
+  fourOrFiveStarWithText.sort((a, b) => {
+    if (b.rating !== a.rating) return b.rating - a.rating;
+    return b.text.length - a.text.length;
+  });
+  
+  return fourOrFiveStarWithText.slice(0, 3);
 }
 
 function getFirstPhoto(photosString?: string): string {
@@ -378,7 +402,7 @@ function transformToPreviewData(b: BackendBusiness): PreviewData {
     reviewsSection: {
       tagline: "TESTIMONIALS",
       headline: "What Our Customers Say",
-      subheadline: ratingCount > 0 ? `Based on ${ratingCount}+ Google Reviews` : "Customer Reviews",
+      subheadline: "Real reviews from real customers",
       reviews: reviews.length > 0 ? reviews : [
         { text: "Excellent service! Professional, timely, and affordable. Highly recommend!", rating: 5, author: "Verified Customer" },
         { text: "Great experience from start to finish. Will definitely use again.", rating: 5, author: "Verified Customer" },

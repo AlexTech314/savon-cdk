@@ -100,14 +100,36 @@ export function getCitiesByState(
   stateIds: string[],
   limit: number
 ): City[] {
-  const filtered = cities.filter(c => stateIds.includes(c.state_id));
-  
-  // Already sorted by population from loadCities
-  // -1 means no limit (return all cities)
+  // -1 means no limit (return all cities in selected states)
   if (limit < 0) {
-    return filtered;
+    return cities.filter(c => stateIds.includes(c.state_id));
   }
-  return filtered.slice(0, limit);
+  
+  // Apply limit PER STATE, not globally
+  // Group cities by state, take top N from each, then combine
+  const citiesByState = new Map<string, City[]>();
+  
+  for (const city of cities) {
+    if (!stateIds.includes(city.state_id)) continue;
+    
+    const stateCities = citiesByState.get(city.state_id) || [];
+    // Only add if we haven't hit the limit for this state
+    if (stateCities.length < limit) {
+      stateCities.push(city);
+      citiesByState.set(city.state_id, stateCities);
+    }
+  }
+  
+  // Combine all cities and sort by population
+  const result: City[] = [];
+  for (const stateCities of citiesByState.values()) {
+    result.push(...stateCities);
+  }
+  
+  // Sort by population descending
+  result.sort((a, b) => b.population - a.population);
+  
+  return result;
 }
 
 export function generateSearchQueries(
