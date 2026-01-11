@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Business } from '@/lib/types';
 import { 
   generateDetails, 
@@ -24,6 +24,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -34,8 +42,65 @@ import {
   ArrowUpDown,
   Loader2,
   ExternalLink,
+  Settings2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+// Column definition type
+interface ColumnDef {
+  key: string;
+  label: string;
+  sortable: boolean;
+  defaultVisible: boolean;
+  category: 'core' | 'contact' | 'location' | 'metrics' | 'pipeline' | 'meta';
+  render?: (business: Business) => React.ReactNode;
+}
+
+// All available columns
+const ALL_COLUMNS: ColumnDef[] = [
+  // Core
+  { key: 'name', label: 'Business Name', sortable: true, defaultVisible: true, category: 'core' },
+  { key: 'business_type', label: 'Type', sortable: true, defaultVisible: true, category: 'core' },
+  
+  // Location
+  { key: 'address', label: 'Address', sortable: true, defaultVisible: false, category: 'location' },
+  { key: 'city', label: 'City', sortable: true, defaultVisible: true, category: 'location' },
+  { key: 'state', label: 'State', sortable: true, defaultVisible: true, category: 'location' },
+  
+  // Contact
+  { key: 'phone', label: 'Phone', sortable: true, defaultVisible: false, category: 'contact' },
+  { key: 'website', label: 'Website', sortable: false, defaultVisible: false, category: 'contact' },
+  
+  // Metrics
+  { key: 'rating', label: 'Rating', sortable: true, defaultVisible: false, category: 'metrics' },
+  { key: 'review_count', label: 'Reviews', sortable: true, defaultVisible: false, category: 'metrics' },
+  
+  // Pipeline
+  { key: 'pipeline', label: 'Pipeline', sortable: false, defaultVisible: true, category: 'pipeline' },
+  { key: 'data_tier', label: 'Data Tier', sortable: true, defaultVisible: false, category: 'pipeline' },
+  { key: 'has_website', label: 'Has Site', sortable: true, defaultVisible: false, category: 'pipeline' },
+  
+  // Meta
+  { key: 'friendly_slug', label: 'Slug', sortable: true, defaultVisible: false, category: 'meta' },
+  { key: 'created_at', label: 'Created', sortable: true, defaultVisible: false, category: 'meta' },
+  { key: 'updated_at', label: 'Updated', sortable: true, defaultVisible: false, category: 'meta' },
+  
+  // Actions (always visible)
+  { key: 'preview', label: 'Preview', sortable: false, defaultVisible: true, category: 'core' },
+];
+
+const CATEGORY_LABELS: Record<string, string> = {
+  core: 'Core',
+  contact: 'Contact',
+  location: 'Location',
+  metrics: 'Metrics',
+  pipeline: 'Pipeline',
+  meta: 'Metadata',
+};
+
+const STORAGE_KEY = 'business-table-visible-columns';
 
 // Pipeline step configuration
 type PipelineStep = 'search' | 'details' | 'reviews' | 'photos' | 'copy';
@@ -163,7 +228,6 @@ const PipelineStatus: React.FC<{
           toast({ title: 'Not Supported', description: 'This step cannot be run individually', variant: 'destructive' });
           return;
       }
-      // Only update the specific step that was completed
       onStepComplete(stepDoneKey);
     } catch (error) {
       console.error(`Failed to run ${step}:`, error);
@@ -208,6 +272,123 @@ const PipelineStatus: React.FC<{
   );
 };
 
+// Format cell value based on column type
+const formatCellValue = (
+  business: Business, 
+  column: ColumnDef,
+  onStepComplete: (stepDoneKey: keyof Business) => void
+): React.ReactNode => {
+  const value = business[column.key as keyof Business];
+  
+  switch (column.key) {
+    case 'name':
+      return <span className="font-medium">{value as string}</span>;
+    
+    case 'business_type':
+      return <Badge variant="secondary">{value as string}</Badge>;
+    
+    case 'website':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <a 
+          href={value as string} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-primary hover:underline text-sm truncate max-w-[150px] block"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(value as string).replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+        </a>
+      );
+    
+    case 'phone':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <a 
+          href={`tel:${value}`}
+          className="text-primary hover:underline text-sm"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {value as string}
+        </a>
+      );
+    
+    case 'rating':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <span className="flex items-center gap-1">
+          <span className="text-yellow-500">★</span>
+          {(value as number).toFixed(1)}
+        </span>
+      );
+    
+    case 'review_count':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return <span>{value as number} reviews</span>;
+    
+    case 'data_tier':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      const tierLabels: Record<string, string> = {
+        pro: 'Pro',
+        enterprise: 'Enterprise',
+        enterprise_atmosphere: 'Ent+Atm',
+      };
+      return <Badge variant="outline">{tierLabels[value as string] || String(value)}</Badge>;
+    
+    case 'has_website':
+      return value ? (
+        <Badge variant="secondary" className="bg-green-500/10 text-green-600">Yes</Badge>
+      ) : (
+        <Badge variant="secondary" className="bg-red-500/10 text-red-600">No</Badge>
+      );
+    
+    case 'pipeline':
+      return (
+        <PipelineStatus 
+          business={business} 
+          onStepComplete={onStepComplete}
+        />
+      );
+    
+    case 'preview':
+      return (
+        <a 
+          href={`https://alpha.savondesigns.com/preview/${business.place_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary hover:underline text-sm flex items-center gap-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <ExternalLink className="h-3 w-3" />
+          Preview
+        </a>
+      );
+    
+    case 'created_at':
+    case 'updated_at':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <span className="text-sm text-muted-foreground">
+          {new Date(value as string).toLocaleDateString()}
+        </span>
+      );
+    
+    case 'friendly_slug':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <span className="font-mono text-xs text-muted-foreground truncate max-w-[120px] block">
+          {value as string}
+        </span>
+      );
+    
+    default:
+      if (value === undefined || value === null || value === '') {
+        return <span className="text-muted-foreground">—</span>;
+      }
+      return String(value);
+  }
+};
+
 interface BusinessTableProps {
   businesses: Business[];
   isLoading: boolean;
@@ -237,6 +418,65 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
 }) => {
   const queryClient = useQueryClient();
 
+  // Load visible columns from localStorage
+  const [visibleColumns, setVisibleColumns] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error('Failed to load column preferences:', e);
+    }
+    return ALL_COLUMNS.filter(c => c.defaultVisible).map(c => c.key);
+  });
+
+  // Save to localStorage when columns change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleColumns));
+    } catch (e) {
+      console.error('Failed to save column preferences:', e);
+    }
+  }, [visibleColumns]);
+
+  // Get visible column definitions
+  const columns = useMemo(() => 
+    ALL_COLUMNS.filter(c => visibleColumns.includes(c.key)),
+    [visibleColumns]
+  );
+
+  // Group columns by category for the dropdown
+  const columnsByCategory = useMemo(() => {
+    const groups: Record<string, ColumnDef[]> = {};
+    ALL_COLUMNS.forEach(col => {
+      if (!groups[col.category]) groups[col.category] = [];
+      groups[col.category].push(col);
+    });
+    return groups;
+  }, []);
+
+  const toggleColumn = (key: string) => {
+    setVisibleColumns(prev => 
+      prev.includes(key) 
+        ? prev.filter(k => k !== key)
+        : [...prev, key]
+    );
+  };
+
+  const resetToDefaults = () => {
+    setVisibleColumns(ALL_COLUMNS.filter(c => c.defaultVisible).map(c => c.key));
+  };
+
+  const showAllColumns = () => {
+    setVisibleColumns(ALL_COLUMNS.map(c => c.key));
+  };
+
+  const hideAllColumns = () => {
+    // Keep at least name and preview
+    setVisibleColumns(['name', 'preview']);
+  };
+
   const allSelected = businesses.length > 0 && businesses.every(b => selectedIds.includes(b.place_id));
   const someSelected = businesses.some(b => selectedIds.includes(b.place_id));
 
@@ -257,14 +497,22 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
     }
   };
 
-  const columns = [
-    { key: 'name', label: 'Business Name', sortable: true },
-    { key: 'business_type', label: 'Type', sortable: true },
-    { key: 'city', label: 'City', sortable: true },
-    { key: 'state', label: 'State', sortable: true },
-    { key: 'pipeline', label: 'Pipeline', sortable: false },
-    { key: 'preview', label: 'Preview', sortable: false },
-  ];
+  const handleStepComplete = (business: Business, stepDoneKey: keyof Business) => {
+    queryClient.setQueriesData<{ businesses: Business[]; total: number; page: number; totalPages: number }>(
+      { queryKey: ['businesses'] },
+      (oldData) => {
+        if (!oldData) return oldData;
+        return {
+          ...oldData,
+          businesses: oldData.businesses.map((b) =>
+            b.place_id === business.place_id
+              ? { ...b, [stepDoneKey]: true }
+              : b
+          ),
+        };
+      }
+    );
+  };
 
   if (isLoading && businesses.length === 0) {
     return (
@@ -308,11 +556,67 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border overflow-hidden">
+      {/* Column visibility controls */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          Showing {columns.length} of {ALL_COLUMNS.length} columns
+        </p>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Settings2 className="h-4 w-4" />
+              Columns
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56 max-h-[400px] overflow-y-auto">
+            <DropdownMenuLabel className="flex items-center justify-between">
+              <span>Toggle Columns</span>
+              <div className="flex gap-1">
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={showAllColumns}>
+                  <Eye className="h-3 w-3" />
+                </Button>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={hideAllColumns}>
+                  <EyeOff className="h-3 w-3" />
+                </Button>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            
+            {Object.entries(columnsByCategory).map(([category, cols]) => (
+              <React.Fragment key={category}>
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                  {CATEGORY_LABELS[category] || category}
+                </DropdownMenuLabel>
+                {cols.map((col) => (
+                  <DropdownMenuCheckboxItem
+                    key={col.key}
+                    checked={visibleColumns.includes(col.key)}
+                    onCheckedChange={() => toggleColumn(col.key)}
+                  >
+                    {col.label}
+                  </DropdownMenuCheckboxItem>
+                ))}
+                <DropdownMenuSeparator />
+              </React.Fragment>
+            ))}
+            
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="w-full justify-center text-xs"
+              onClick={resetToDefaults}
+            >
+              Reset to Defaults
+            </Button>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <div className="rounded-lg border border-border overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50 hover:bg-muted/50">
-              <TableHead className="w-12">
+              <TableHead className="w-12 sticky left-0 bg-muted/50 z-10">
                 <Checkbox
                   checked={allSelected}
                   onCheckedChange={handleSelectAll}
@@ -321,7 +625,7 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                 />
               </TableHead>
               {columns.map((col) => (
-                <TableHead key={col.key}>
+                <TableHead key={col.key} className="whitespace-nowrap">
                   {col.sortable ? (
                     <Button
                       variant="ghost"
@@ -348,56 +652,29 @@ export const BusinessTable: React.FC<BusinessTableProps> = ({
                 key={business.place_id}
                 className="cursor-pointer transition-colors hover:bg-muted/50"
                 onClick={(e) => {
-                  if ((e.target as HTMLElement).closest('button, [role="checkbox"]')) return;
+                  if ((e.target as HTMLElement).closest('button, [role="checkbox"], a')) return;
                   onRowClick(business);
                 }}
               >
-                <TableCell onClick={(e) => e.stopPropagation()}>
+                <TableCell className="sticky left-0 bg-background z-10" onClick={(e) => e.stopPropagation()}>
                   <Checkbox
                     checked={selectedIds.includes(business.place_id)}
                     onCheckedChange={() => handleSelectOne(business.place_id)}
                     aria-label={`Select ${business.name}`}
                   />
                 </TableCell>
-                <TableCell className="font-medium">{business.name}</TableCell>
-                <TableCell>
-                  <Badge variant="secondary">{business.business_type}</Badge>
-                </TableCell>
-                <TableCell>{business.city}</TableCell>
-                <TableCell>{business.state}</TableCell>
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <PipelineStatus 
-                    business={business} 
-                    onStepComplete={(stepDoneKey) => {
-                      // Update only the specific business in the cache
-                      queryClient.setQueriesData<{ businesses: Business[]; total: number; page: number; totalPages: number }>(
-                        { queryKey: ['businesses'] },
-                        (oldData) => {
-                          if (!oldData) return oldData;
-                          return {
-                            ...oldData,
-                            businesses: oldData.businesses.map((b) =>
-                              b.place_id === business.place_id
-                                ? { ...b, [stepDoneKey]: true }
-                                : b
-                            ),
-                          };
-                        }
-                      );
+                {columns.map((col) => (
+                  <TableCell 
+                    key={col.key}
+                    onClick={(e) => {
+                      if (col.key === 'pipeline' || col.key === 'preview' || col.key === 'website' || col.key === 'phone') {
+                        e.stopPropagation();
+                      }
                     }}
-                  />
-                </TableCell>
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <a 
-                    href={`https://alpha.savondesigns.com/preview/${business.place_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline text-sm flex items-center gap-1"
                   >
-                    <ExternalLink className="h-3 w-3" />
-                    Preview
-                  </a>
-                </TableCell>
+                    {formatCellValue(business, col, (stepDoneKey) => handleStepComplete(business, stepDoneKey))}
+                  </TableCell>
+                ))}
               </TableRow>
             ))}
           </TableBody>

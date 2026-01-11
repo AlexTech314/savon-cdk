@@ -623,6 +623,14 @@ export class AppStack extends cdk.Stack {
       authorizer,
     });
 
+    // Get available filter options (types, states)
+    httpApi.addRoutes({
+      path: '/businesses/filters',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: configIntegration,
+      authorizer,
+    });
+
     httpApi.addRoutes({
       path: '/jobs',
       methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],

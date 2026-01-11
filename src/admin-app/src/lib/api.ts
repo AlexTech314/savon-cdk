@@ -128,65 +128,42 @@ export const getBusinesses = async (params: {
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
 }): Promise<PaginatedResponse<Business>> => {
-  const { page = 1, limit = 20, search } = params;
-  
+  const { page = 1, limit = 20, search, filters } = params;
+
   const queryParams = new URLSearchParams();
   queryParams.set('page', String(page));
   queryParams.set('limit', String(limit));
+  
   if (search) {
     queryParams.set('q', search);
   }
   
+  // Pass filters to backend
+  if (filters?.business_type) {
+    queryParams.set('business_type', filters.business_type);
+  }
+  if (filters?.state) {
+    queryParams.set('state', filters.state);
+  }
+  if (filters?.pipeline_status) {
+    queryParams.set('pipeline_status', filters.pipeline_status);
+  }
+  if (filters?.has_website !== null && filters?.has_website !== undefined) {
+    queryParams.set('has_website', String(filters.has_website));
+  }
+
   const response = await apiClient<{
     items: BackendBusiness[];
     count: number;
     page: number;
     limit: number;
   }>(`/businesses?${queryParams.toString()}`);
+
+  let data = response.items.map(transformBusiness);
   
-  const data = response.items.map(transformBusiness);
-  
-  // Apply client-side filtering if needed (API does basic search)
-  let filtered = data;
-  const filters = params.filters;
-  if (filters?.business_type) {
-    filtered = filtered.filter(b => b.business_type === filters.business_type);
-  }
-  if (filters?.state) {
-    filtered = filtered.filter(b => b.state === filters.state);
-  }
-  if (filters?.has_copy !== null && filters?.has_copy !== undefined) {
-    filtered = filtered.filter(b => filters.has_copy ? !!b.generated_copy : !b.generated_copy);
-  }
-  // Pipeline status filtering
-  if (filters?.pipeline_status) {
-    filtered = filtered.filter(b => {
-      switch (filters.pipeline_status) {
-        case 'searched':
-          return b.searched && !b.details_fetched;
-        case 'details':
-          return b.details_fetched && !b.reviews_fetched;
-        case 'reviews':
-          return b.reviews_fetched && !b.copy_generated;
-        case 'photos':
-          return b.photos_fetched;
-        case 'copy':
-        case 'complete':
-          return b.copy_generated;
-        case 'has_website':
-          return b.has_website;
-        default:
-          return true;
-      }
-    });
-  }
-  if (filters?.has_website !== null && filters?.has_website !== undefined) {
-    filtered = filtered.filter(b => filters.has_website ? b.has_website : !b.has_website);
-  }
-  
-  // Apply sorting
+  // Apply sorting client-side (backend doesn't sort)
   if (params.sortBy) {
-    filtered.sort((a, b) => {
+    data.sort((a, b) => {
       const aVal = (a as Record<string, unknown>)[params.sortBy!] || '';
       const bVal = (b as Record<string, unknown>)[params.sortBy!] || '';
       const comparison = String(aVal).localeCompare(String(bVal));
@@ -195,7 +172,7 @@ export const getBusinesses = async (params: {
   }
   
   return { 
-    data: filtered, 
+    data, 
     total: response.count, 
     page: response.page, 
     limit: response.limit, 
@@ -286,6 +263,15 @@ export interface BusinessColumnsResponse {
 
 export const getBusinessColumns = async (): Promise<BusinessColumnsResponse> => {
   return apiClient<BusinessColumnsResponse>('/businesses/columns', { requiresAuth: true });
+};
+
+export interface BusinessFilterOptionsResponse {
+  businessTypes: string[];
+  states: string[];
+}
+
+export const getBusinessFilterOptions = async (): Promise<BusinessFilterOptionsResponse> => {
+  return apiClient<BusinessFilterOptionsResponse>('/businesses/filters', { requiresAuth: true });
 };
 
 export const exportBusinesses = async (columns?: string[]): Promise<string> => {

@@ -80,6 +80,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await getBusinessColumns();
     }
     
+    // GET /businesses/filters - Get available filter options (types, states)
+    if (routeKey === 'GET /businesses/filters') {
+      return await getBusinessFilterOptions();
+    }
+
     // POST /businesses/count - Count businesses matching filter rules
     if (routeKey === 'POST /businesses/count') {
       return await countBusinesses(body);
@@ -124,25 +129,16 @@ async function listBusinesses(
   const page = parseInt(queryParams?.page || '1', 10);
   const searchTerm = queryParams?.q?.toLowerCase();
   
-  // Get total count first (for pagination)
-  let totalCount = 0;
-  let countLastKey: Record<string, unknown> | undefined;
-  do {
-    const countCommand = new ScanCommand({
-      TableName: TABLE_NAME,
-      Select: 'COUNT',
-      ExclusiveStartKey: countLastKey,
-    });
-    const countResult = await docClient.send(countCommand);
-    totalCount += countResult.Count || 0;
-    countLastKey = countResult.LastEvaluatedKey;
-  } while (countLastKey);
-
-  // Calculate offset for page-based pagination
-  const offset = (page - 1) * limit;
+  // Filter parameters
+  const businessTypeFilter = queryParams?.business_type;
+  const stateFilter = queryParams?.state;
+  const pipelineStatusFilter = queryParams?.pipeline_status;
+  const hasWebsiteFilter = queryParams?.has_website;
   
-  // Scan all items up to offset + limit (for small datasets)
-  // For large datasets, consider using a GSI with sort key for efficient pagination
+  // Check if any filters are active
+  const hasFilters = searchTerm || businessTypeFilter || stateFilter || pipelineStatusFilter || hasWebsiteFilter;
+
+  // Scan all items (we need to scan all to apply filters properly)
   const allItems: Record<string, unknown>[] = [];
   let scanLastKey: Record<string, unknown> | undefined;
   
@@ -155,11 +151,6 @@ async function listBusinesses(
     const result = await docClient.send(command);
     allItems.push(...(result.Items || []));
     scanLastKey = result.LastEvaluatedKey;
-    
-    // Stop early if we have enough items
-    if (!searchTerm && allItems.length >= offset + limit) {
-      break;
-    }
   } while (scanLastKey);
   
   let items = allItems;
@@ -172,15 +163,63 @@ async function listBusinesses(
         String(item[field] || '').toLowerCase().includes(searchTerm)
       );
     });
-    totalCount = items.length; // Update count to reflect filtered results
   }
+  
+  // Apply business type filter
+  if (businessTypeFilter) {
+    items = items.filter(item => 
+      String(item.business_type || '').toLowerCase() === businessTypeFilter.toLowerCase()
+    );
+  }
+  
+  // Apply state filter
+  if (stateFilter) {
+    items = items.filter(item => 
+      String(item.state || '').toUpperCase() === stateFilter.toUpperCase()
+    );
+  }
+  
+  // Apply pipeline status filter
+  if (pipelineStatusFilter) {
+    items = items.filter(item => {
+      switch (pipelineStatusFilter) {
+        case 'searched':
+          return item.searched && !item.details_fetched;
+        case 'details':
+          return item.details_fetched && !item.reviews_fetched;
+        case 'reviews':
+          return item.reviews_fetched && !item.copy_generated;
+        case 'photos':
+          return item.photos_fetched;
+        case 'copy':
+        case 'complete':
+          return item.copy_generated;
+        case 'has_website':
+          return item.has_website;
+        default:
+          return true;
+      }
+    });
+  }
+  
+  // Apply has_website filter
+  if (hasWebsiteFilter !== undefined) {
+    const hasWebsite = hasWebsiteFilter === 'true';
+    items = items.filter(item => hasWebsite ? item.has_website : !item.has_website);
+  }
+  
+  // Get filtered count for pagination
+  const filteredCount = items.length;
+  
+  // Calculate offset for page-based pagination
+  const offset = (page - 1) * limit;
   
   // Apply pagination
   const paginatedItems = items.slice(offset, offset + limit);
   
   return response(200, {
     items: paginatedItems,
-    count: totalCount,
+    count: filteredCount,
     page,
     limit,
   });
@@ -405,6 +444,43 @@ async function getBusinessColumns(): Promise<APIGatewayProxyResultV2> {
   return response(200, {
     columns: sortedColumns,
     total: sortedColumns.length,
+  });
+}
+
+/**
+ * Get available filter options (unique business types and states)
+ * Used for populating filter dropdowns
+ */
+async function getBusinessFilterOptions(): Promise<APIGatewayProxyResultV2> {
+  const businessTypes = new Set<string>();
+  const states = new Set<string>();
+  let lastKey: Record<string, unknown> | undefined;
+
+  do {
+    const command = new ScanCommand({
+      TableName: TABLE_NAME,
+      ExclusiveStartKey: lastKey,
+      ProjectionExpression: 'business_type, #state',
+      ExpressionAttributeNames: { '#state': 'state' },
+    });
+
+    const result = await docClient.send(command);
+
+    for (const item of (result.Items || [])) {
+      if (item.business_type && typeof item.business_type === 'string') {
+        businessTypes.add(item.business_type);
+      }
+      if (item.state && typeof item.state === 'string') {
+        states.add(item.state.toUpperCase());
+      }
+    }
+
+    lastKey = result.LastEvaluatedKey;
+  } while (lastKey);
+
+  return response(200, {
+    businessTypes: [...businessTypes].sort(),
+    states: [...states].sort(),
   });
 }
 

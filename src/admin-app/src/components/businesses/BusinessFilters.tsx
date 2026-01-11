@@ -1,4 +1,6 @@
 import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getBusinessFilterOptions } from '@/lib/api';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -8,7 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { BusinessFilters, PipelineStatus } from '@/lib/types';
-import { Search, X } from 'lucide-react';
+import { Search, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface BusinessFiltersComponentProps {
@@ -17,9 +19,6 @@ interface BusinessFiltersComponentProps {
   filters: BusinessFilters;
   onFiltersChange: (filters: BusinessFilters) => void;
 }
-
-const businessTypes = ['Plumber', 'HVAC Contractor', 'Electrician'];
-const states = ['CA', 'TX', 'FL', 'NY', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI'];
 
 const pipelineStatuses: { value: PipelineStatus; label: string }[] = [
   { value: 'searched', label: 'Searched (needs details)' },
@@ -35,6 +34,13 @@ export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> =
   filters,
   onFiltersChange,
 }) => {
+  // Fetch available filter options from API
+  const { data: filterOptions, isLoading } = useQuery({
+    queryKey: ['businessFilterOptions'],
+    queryFn: getBusinessFilterOptions,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
+
   const hasActiveFilters = search || filters.business_type || filters.state || filters.has_copy !== undefined || filters.pipeline_status;
 
   const clearFilters = () => {
@@ -65,12 +71,19 @@ export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> =
           })
         }
       >
-        <SelectTrigger className="w-full sm:w-44">
-          <SelectValue placeholder="Business Type" />
+        <SelectTrigger className="w-full sm:w-48">
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Loading...</span>
+            </div>
+          ) : (
+            <SelectValue placeholder="Business Type" />
+          )}
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Types</SelectItem>
-          {businessTypes.map((type) => (
+          {filterOptions?.businessTypes.map((type) => (
             <SelectItem key={type} value={type}>
               {type}
             </SelectItem>
@@ -89,11 +102,18 @@ export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> =
         }
       >
         <SelectTrigger className="w-full sm:w-32">
-          <SelectValue placeholder="State" />
+          {isLoading ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>...</span>
+            </div>
+          ) : (
+            <SelectValue placeholder="State" />
+          )}
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All States</SelectItem>
-          {states.map((state) => (
+          {filterOptions?.states.map((state) => (
             <SelectItem key={state} value={state}>
               {state}
             </SelectItem>
