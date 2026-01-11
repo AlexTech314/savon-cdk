@@ -23,7 +23,13 @@ interface Business {
   hours: string;
   reviews: string;
   google_maps_uri: string;
+  // Pipeline status flags
+  searched?: boolean;
+  details_fetched?: boolean;
+  reviews_fetched?: boolean;
+  photos_fetched?: boolean;
   copy_generated?: boolean;
+  has_website?: boolean;
 }
 
 interface LandingPageCopy {
@@ -258,17 +264,29 @@ async function generateCopy(business: Business): Promise<Record<string, string>>
   return flattenCopy(copy);
 }
 
-async function getBusinessesMissingCopy(placeIds?: string[]): Promise<Business[]> {
+async function getBusinessesMissingCopy(
+  placeIds?: string[], 
+  skipWithWebsite = true,
+  requireReviews = false
+): Promise<{ businesses: Business[]; skippedNoReviews: number; skippedHasWebsite: number }> {
   const businesses: Business[] = [];
   let lastKey: Record<string, unknown> | undefined;
+  let skippedNoReviews = 0;
+  let skippedHasWebsite = 0;
 
   do {
+    // Build filter expression for batch mode
+    let filterExpression = '(attribute_not_exists(copy_generated) OR copy_generated = :false)';
+    const expressionValues: Record<string, unknown> = { ':false': false, ':true': true };
+    
+    if (skipWithWebsite) {
+      filterExpression += ' AND (attribute_not_exists(has_website) OR has_website = :false)';
+    }
+
     const command = new ScanCommand({
       TableName: BUSINESSES_TABLE_NAME,
-      FilterExpression: placeIds 
-        ? undefined  // If specific IDs provided, we'll filter after
-        : 'attribute_not_exists(copy_generated) OR copy_generated = :false',
-      ExpressionAttributeValues: placeIds ? undefined : { ':false': false },
+      FilterExpression: placeIds ? undefined : filterExpression,
+      ExpressionAttributeValues: placeIds ? undefined : expressionValues,
       ExclusiveStartKey: lastKey,
     });
 
@@ -276,7 +294,17 @@ async function getBusinessesMissingCopy(placeIds?: string[]): Promise<Business[]
     const items = (result.Items || []) as Business[];
     
     if (placeIds) {
-      businesses.push(...items.filter(b => placeIds.includes(b.place_id)));
+      // Filter by placeIds first
+      const filtered = items.filter(b => placeIds.includes(b.place_id));
+      
+      // Then apply website filter if enabled
+      for (const b of filtered) {
+        if (skipWithWebsite && b.has_website) {
+          skippedHasWebsite++;
+          continue;
+        }
+        businesses.push(b);
+      }
     } else {
       businesses.push(...items);
     }
@@ -284,7 +312,21 @@ async function getBusinessesMissingCopy(placeIds?: string[]): Promise<Business[]
     lastKey = result.LastEvaluatedKey;
   } while (lastKey);
 
-  return businesses;
+  // If requireReviews is true, filter out businesses without reviews
+  const finalBusinesses: Business[] = [];
+  for (const b of businesses) {
+    if (requireReviews && !b.reviews_fetched) {
+      skippedNoReviews++;
+      continue;
+    }
+    finalBusinesses.push(b);
+  }
+
+  return { 
+    businesses: finalBusinesses, 
+    skippedNoReviews, 
+    skippedHasWebsite 
+  };
 }
 
 async function updateBusinessWithCopy(placeId: string, copyFields: Record<string, string>): Promise<void> {
@@ -320,13 +362,25 @@ async function updateBusinessWithCopy(placeId: string, copyFields: Record<string
 }
 
 interface JobInput {
+  // Task flags
+  runSearch?: boolean;
+  runDetails?: boolean;
+  runEnrich?: boolean;
+  runPhotos?: boolean;
+  runCopy?: boolean;
+  
+  // Input data
   placeIds?: string[];
-  allMissingCopy?: boolean;
+  
+  // Options
   concurrency?: number;
+  skipIfDone?: boolean;
+  skipWithWebsite?: boolean; // Skip businesses that have a website (default: true)
+  requireReviews?: boolean;  // Only process businesses with reviews_fetched=true (default: false, will warn)
 }
 
 async function main(): Promise<void> {
-  console.log('=== LLM Copy Generation Task ===');
+  console.log('=== Copy Task (LLM Copy Generation) ===');
   console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
 
   // Parse job input from environment
@@ -343,34 +397,72 @@ async function main(): Promise<void> {
 
   const placeIds = jobInput.placeIds;
   const concurrency = jobInput.concurrency || 5;
+  const skipIfDone = jobInput.skipIfDone !== false; // Default true
+  const skipWithWebsite = jobInput.skipWithWebsite !== false; // Default true
+  const requireReviews = jobInput.requireReviews || false; // Default false
 
   console.log(`Concurrency: ${concurrency}`);
   console.log(`Specific place IDs: ${placeIds ? placeIds.length : 'all missing copy'}`);
+  console.log(`Skip if already done: ${skipIfDone}`);
+  console.log(`Skip with website: ${skipWithWebsite}`);
+  console.log(`Require reviews: ${requireReviews}`);
 
   // Get businesses that need copy
-  const businesses = await getBusinessesMissingCopy(placeIds);
-  console.log(`Found ${businesses.length} businesses needing copy generation`);
+  const { businesses, skippedNoReviews, skippedHasWebsite } = await getBusinessesMissingCopy(
+    placeIds, 
+    skipWithWebsite,
+    requireReviews
+  );
+  
+  // If skipIfDone is true and we have specific placeIds, filter out already-done ones
+  let businessesToProcess = businesses;
+  if (skipIfDone && placeIds) {
+    businessesToProcess = businesses.filter(b => !b.copy_generated);
+  }
+  
+  console.log(`Found ${businessesToProcess.length} businesses needing copy generation`);
+  if (skippedHasWebsite > 0) {
+    console.log(`  Skipped ${skippedHasWebsite} businesses with websites`);
+  }
+  if (skippedNoReviews > 0) {
+    console.log(`  Skipped ${skippedNoReviews} businesses without reviews (requireReviews=true)`);
+  }
 
-  if (businesses.length === 0) {
+  if (businessesToProcess.length === 0) {
     console.log('No businesses need copy generation. Exiting.');
     return;
+  }
+
+  // Check for businesses without reviews and warn
+  const withoutReviews = businessesToProcess.filter(b => !b.reviews_fetched);
+  if (withoutReviews.length > 0 && !requireReviews) {
+    console.log(`\n⚠️  WARNING: ${withoutReviews.length} businesses don't have reviews fetched.`);
+    console.log('   Copy will be generated without review data. Consider running enrich-task first.');
   }
 
   // Process with limited concurrency
   let processed = 0;
   let failed = 0;
+  let processedWithReviews = 0;
+  let processedWithoutReviews = 0;
 
-  for (let i = 0; i < businesses.length; i += concurrency) {
-    const batch = businesses.slice(i, i + concurrency);
+  for (let i = 0; i < businessesToProcess.length; i += concurrency) {
+    const batch = businessesToProcess.slice(i, i + concurrency);
     
     await Promise.all(batch.map(async (business) => {
       try {
-        console.log(`\nGenerating copy for: ${business.business_name} (${business.place_id})`);
+        const hasReviews = business.reviews_fetched;
+        console.log(`\nGenerating copy for: ${business.business_name} (${business.place_id})${hasReviews ? '' : ' [no reviews]'}`);
         
         const copyFields = await generateCopy(business);
         await updateBusinessWithCopy(business.place_id, copyFields);
         
         processed++;
+        if (hasReviews) {
+          processedWithReviews++;
+        } else {
+          processedWithoutReviews++;
+        }
         console.log(`  ✓ Updated ${business.business_name}`);
       } catch (error) {
         failed++;
@@ -378,11 +470,13 @@ async function main(): Promise<void> {
       }
     }));
 
-    console.log(`Progress: ${processed + failed}/${businesses.length}`);
+    console.log(`Progress: ${processed + failed}/${businessesToProcess.length}`);
   }
 
-  console.log('\n=== Task Complete ===');
+  console.log('\n=== Copy Task Complete ===');
   console.log(`Processed: ${processed}`);
+  console.log(`  With reviews: ${processedWithReviews}`);
+  console.log(`  Without reviews: ${processedWithoutReviews}`);
   console.log(`Failed: ${failed}`);
 }
 

@@ -1,0 +1,321 @@
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+
+const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
+const docClient = DynamoDBDocumentClient.from(dynamoClient);
+
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
+const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
+
+// Rate limiter for Google Places API (600 requests/minute = 10/second)
+const RATE_LIMIT_PER_SECOND = 8;
+const rateLimiter = {
+  tokens: RATE_LIMIT_PER_SECOND,
+  lastRefill: Date.now(),
+  
+  async acquire(): Promise<void> {
+    return new Promise((resolve) => {
+      const tryAcquire = () => {
+        const now = Date.now();
+        const elapsed = (now - this.lastRefill) / 1000;
+        
+        this.tokens = Math.min(
+          RATE_LIMIT_PER_SECOND,
+          this.tokens + elapsed * RATE_LIMIT_PER_SECOND
+        );
+        this.lastRefill = now;
+        
+        if (this.tokens >= 1) {
+          this.tokens -= 1;
+          resolve();
+        } else {
+          const waitTime = ((1 - this.tokens) / RATE_LIMIT_PER_SECOND) * 1000;
+          setTimeout(tryAcquire, waitTime);
+        }
+      };
+      
+      tryAcquire();
+    });
+  }
+};
+
+// ============ Types ============
+
+interface JobInput {
+  // Task flags
+  runSearch?: boolean;
+  runDetails?: boolean;
+  runEnrich?: boolean;
+  runPhotos?: boolean;
+  runCopy?: boolean;
+  
+  // Input data
+  placeIds?: string[];
+  
+  // Options
+  concurrency?: number;
+  skipIfDone?: boolean;
+}
+
+interface Business {
+  place_id: string;
+  business_name: string;
+  business_type?: string;
+  searched?: boolean;
+  details_fetched?: boolean;
+  has_website?: boolean;
+  [key: string]: unknown;
+}
+
+interface PlaceDetails {
+  id: string;
+  displayName?: { text: string };
+  formattedAddress?: string;
+  nationalPhoneNumber?: string;
+  websiteUri?: string;
+  rating?: number;
+  userRatingCount?: number;
+  regularOpeningHours?: { weekdayDescriptions?: string[] };
+  googleMapsUri?: string;
+  location?: { latitude: number; longitude: number };
+  addressComponents?: Array<{ longText: string; shortText: string; types: string[] }>;
+  primaryType?: string;
+}
+
+// ============ API Functions ============
+
+/**
+ * Get place details using Place Details API (Enterprise tier: $20/1000)
+ * Requests: formattedAddress, addressComponents, nationalPhoneNumber, rating, 
+ *           userRatingCount, regularOpeningHours, websiteUri, googleMapsUri, location
+ * 
+ * Does NOT request: reviews, editorialSummary (those are Enterprise+Atmosphere tier)
+ */
+async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
+  await rateLimiter.acquire();
+  
+  const url = `https://places.googleapis.com/v1/places/${placeId}`;
+  
+  // Enterprise tier fields (NO reviews or editorialSummary - those add $5/1000)
+  const fieldMask = [
+    'id',
+    'displayName',
+    'formattedAddress',
+    'addressComponents',
+    'nationalPhoneNumber',
+    'rating',
+    'userRatingCount',
+    'regularOpeningHours',
+    'websiteUri',
+    'googleMapsUri',
+    'location',
+    'primaryType',
+  ].join(',');
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-FieldMask': fieldMask,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Places API details failed: ${response.status} - ${await response.text()}`);
+  }
+
+  return await response.json() as PlaceDetails;
+}
+
+// ============ Helper Functions ============
+
+function extractCity(formattedAddress: string): string {
+  const parts = formattedAddress.split(',').map(p => p.trim());
+  return parts.length >= 3 ? parts[1] : parts[0] || '';
+}
+
+function extractAddressComponent(components: PlaceDetails['addressComponents'], type: string): string {
+  if (!components) return '';
+  const component = components.find(c => c.types.includes(type));
+  return component?.longText || component?.shortText || '';
+}
+
+/**
+ * Get businesses that need details fetched
+ */
+async function getBusinessesNeedingDetails(placeIds?: string[]): Promise<Business[]> {
+  const businesses: Business[] = [];
+  let lastKey: Record<string, unknown> | undefined;
+
+  do {
+    const command = new ScanCommand({
+      TableName: BUSINESSES_TABLE_NAME,
+      FilterExpression: placeIds 
+        ? undefined  // If specific IDs provided, we'll filter after
+        : '(attribute_not_exists(details_fetched) OR details_fetched = :false) AND searched = :true',
+      ExpressionAttributeValues: placeIds ? undefined : { ':false': false, ':true': true },
+      ExclusiveStartKey: lastKey,
+    });
+
+    const result = await docClient.send(command);
+    const items = (result.Items || []) as Business[];
+    
+    if (placeIds) {
+      businesses.push(...items.filter(b => placeIds.includes(b.place_id)));
+    } else {
+      businesses.push(...items);
+    }
+    
+    lastKey = result.LastEvaluatedKey;
+  } while (lastKey);
+
+  return businesses;
+}
+
+/**
+ * Update business with details from Google Places API
+ */
+async function updateBusinessWithDetails(placeId: string, details: PlaceDetails): Promise<void> {
+  const streetNumber = extractAddressComponent(details.addressComponents, 'street_number');
+  const route = extractAddressComponent(details.addressComponents, 'route');
+  const state = extractAddressComponent(details.addressComponents, 'administrative_area_level_1');
+  const hasWebsite = !!details.websiteUri;
+
+  const updateFields: Record<string, unknown> = {
+    // Business details
+    address: details.formattedAddress || '',
+    city: extractCity(details.formattedAddress || ''),
+    state: state,
+    street: [streetNumber, route].filter(Boolean).join(' '),
+    zip_code: extractAddressComponent(details.addressComponents, 'postal_code'),
+    phone: details.nationalPhoneNumber || '',
+    rating: details.rating || null,
+    rating_count: details.userRatingCount || null,
+    hours: details.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
+    google_maps_uri: details.googleMapsUri || '',
+    latitude: details.location?.latitude || null,
+    longitude: details.location?.longitude || null,
+    website_uri: details.websiteUri || null,
+    primary_type: details.primaryType || null,
+    
+    // Update business name if we have a better one
+    business_name: details.displayName?.text || undefined,
+    
+    // Generate friendly slug
+    friendly_slug: `${(details.displayName?.text || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${placeId.slice(-8)}`,
+    
+    // Pipeline status flags
+    details_fetched: true,
+    has_website: hasWebsite,
+    details_fetched_at: new Date().toISOString(),
+  };
+
+  // Build update expression
+  const updateParts: string[] = [];
+  const expressionNames: Record<string, string> = {};
+  const expressionValues: Record<string, unknown> = {};
+
+  Object.entries(updateFields).forEach(([key, value], index) => {
+    if (value !== undefined) {
+      updateParts.push(`#attr${index} = :val${index}`);
+      expressionNames[`#attr${index}`] = key;
+      expressionValues[`:val${index}`] = value;
+    }
+  });
+
+  await docClient.send(new UpdateCommand({
+    TableName: BUSINESSES_TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
+}
+
+// ============ Main ============
+
+async function main(): Promise<void> {
+  console.log('=== Details Task (Enterprise Tier: $20/1000) ===');
+  console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
+
+  // Parse job input from environment
+  const jobInputStr = process.env.JOB_INPUT;
+  let jobInput: JobInput = {};
+  
+  if (jobInputStr) {
+    try {
+      jobInput = JSON.parse(jobInputStr);
+    } catch (e) {
+      console.warn('Could not parse JOB_INPUT, using defaults');
+    }
+  }
+
+  const placeIds = jobInput.placeIds;
+  const concurrency = jobInput.concurrency || 5;
+  const skipIfDone = jobInput.skipIfDone !== false; // Default true
+
+  console.log(`Concurrency: ${concurrency}`);
+  console.log(`Specific place IDs: ${placeIds ? placeIds.length : 'all needing details'}`);
+  console.log(`Skip if already done: ${skipIfDone}`);
+
+  // Get businesses that need details
+  let businesses = await getBusinessesNeedingDetails(placeIds);
+  
+  // If skipIfDone is true and we have specific placeIds, filter out already-done ones
+  if (skipIfDone && placeIds) {
+    businesses = businesses.filter(b => !b.details_fetched);
+  }
+  
+  console.log(`Found ${businesses.length} businesses needing details`);
+
+  if (businesses.length === 0) {
+    console.log('No businesses need details. Exiting.');
+    return;
+  }
+
+  // Process with limited concurrency
+  let processed = 0;
+  let failed = 0;
+  let withWebsite = 0;
+  let withoutWebsite = 0;
+
+  for (let i = 0; i < businesses.length; i += concurrency) {
+    const batch = businesses.slice(i, i + concurrency);
+    
+    await Promise.all(batch.map(async (business) => {
+      try {
+        console.log(`\nFetching details for: ${business.business_name} (${business.place_id})`);
+        
+        const details = await getPlaceDetails(business.place_id);
+        await updateBusinessWithDetails(business.place_id, details);
+        
+        processed++;
+        if (details.websiteUri) {
+          withWebsite++;
+          console.log(`  ✓ Updated (has website - will be skipped for copy)`);
+        } else {
+          withoutWebsite++;
+          console.log(`  ✓ Updated (no website - good candidate)`);
+        }
+      } catch (error) {
+        failed++;
+        console.error(`  ✗ Failed for ${business.business_name}:`, error);
+      }
+    }));
+
+    console.log(`Progress: ${processed + failed}/${businesses.length}`);
+  }
+
+  console.log('\n=== Details Task Complete ===');
+  console.log(`Processed: ${processed}`);
+  console.log(`Failed: ${failed}`);
+  console.log(`With website: ${withWebsite} (will be skipped)`);
+  console.log(`Without website: ${withoutWebsite} (good candidates)`);
+  console.log('Next step: Run enrich-task to fetch reviews');
+}
+
+main().catch(error => {
+  console.error('Task failed:', error);
+  process.exit(1);
+});

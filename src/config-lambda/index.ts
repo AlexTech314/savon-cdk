@@ -17,6 +17,7 @@ const client = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(client);
 const TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 interface Business {
   place_id: string;
@@ -73,6 +74,21 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     // POST /businesses/{place_id}/generate-copy - Generate preview copy for a business
     if (routeKey === 'POST /businesses/{place_id}/generate-copy') {
       return await generateCopy(pathParameters?.place_id!);
+    }
+    
+    // POST /businesses/{place_id}/generate-details - Fetch details from Google Places API
+    if (routeKey === 'POST /businesses/{place_id}/generate-details') {
+      return await generateDetails(pathParameters?.place_id!);
+    }
+    
+    // POST /businesses/{place_id}/generate-reviews - Fetch reviews from Google Places API
+    if (routeKey === 'POST /businesses/{place_id}/generate-reviews') {
+      return await generateReviews(pathParameters?.place_id!);
+    }
+    
+    // POST /businesses/{place_id}/generate-photos - Fetch photos from Google Places API
+    if (routeKey === 'POST /businesses/{place_id}/generate-photos') {
+      return await generatePhotos(pathParameters?.place_id!);
     }
     
     return response(404, { error: 'Not found' });
@@ -589,6 +605,362 @@ async function generateCopy(placeId: string): Promise<APIGatewayProxyResultV2> {
     Key: { place_id: placeId },
   }));
   
+  return response(200, updatedResult.Item);
+}
+
+// ============================================
+// GOOGLE PLACES API FUNCTIONS
+// ============================================
+
+interface PlaceDetails {
+  id: string;
+  displayName?: { text: string };
+  formattedAddress?: string;
+  nationalPhoneNumber?: string;
+  websiteUri?: string;
+  rating?: number;
+  userRatingCount?: number;
+  regularOpeningHours?: { weekdayDescriptions?: string[] };
+  googleMapsUri?: string;
+  location?: { latitude: number; longitude: number };
+  addressComponents?: Array<{ longText: string; shortText: string; types: string[] }>;
+  primaryType?: string;
+}
+
+interface PlaceEnrichment {
+  reviews?: Array<{
+    text?: { text: string };
+    rating?: number;
+    authorAttribution?: { displayName?: string; uri?: string };
+    relativePublishTimeDescription?: string;
+  }>;
+  editorialSummary?: { text: string };
+}
+
+interface PlacePhotos {
+  photos?: Array<{ name: string }>;
+}
+
+function extractCity(formattedAddress: string): string {
+  const parts = formattedAddress.split(',').map(p => p.trim());
+  return parts.length >= 3 ? parts[1] : parts[0] || '';
+}
+
+function extractAddressComponent(components: PlaceDetails['addressComponents'], type: string): string {
+  if (!components) return '';
+  const component = components.find(c => c.types.includes(type));
+  return component?.longText || component?.shortText || '';
+}
+
+function formatAuthorDisplayName(fullName: string): string {
+  if (!fullName) return 'Anonymous';
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  return `${parts[0]} ${parts[parts.length - 1].charAt(0).toUpperCase()}.`;
+}
+
+function buildPhotoUrl(photoName: string, maxWidth = 800): string {
+  return `https://places.googleapis.com/v1/${photoName}/media?key=${GOOGLE_API_KEY}&maxWidthPx=${maxWidth}`;
+}
+
+/**
+ * POST /businesses/{place_id}/generate-details
+ * Fetches business details from Google Places API (Enterprise tier: $20/1000)
+ */
+async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2> {
+  if (!GOOGLE_API_KEY) {
+    return response(500, { error: 'Google API key not configured' });
+  }
+
+  // Get the business to verify it exists
+  const getCommand = new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  });
+  
+  const result = await docClient.send(getCommand);
+  
+  if (!result.Item) {
+    return response(404, { error: 'Business not found' });
+  }
+
+  const business = result.Item as Business;
+  console.log(`Fetching details for: ${business.business_name}`);
+
+  // Call Google Places API
+  const url = `https://places.googleapis.com/v1/places/${placeId}`;
+  const fieldMask = [
+    'id',
+    'displayName',
+    'formattedAddress',
+    'addressComponents',
+    'nationalPhoneNumber',
+    'rating',
+    'userRatingCount',
+    'regularOpeningHours',
+    'websiteUri',
+    'googleMapsUri',
+    'location',
+    'primaryType',
+  ].join(',');
+
+  const apiResponse = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-FieldMask': fieldMask,
+    },
+  });
+
+  if (!apiResponse.ok) {
+    const errorText = await apiResponse.text();
+    console.error(`Places API failed: ${apiResponse.status} - ${errorText}`);
+    return response(500, { error: 'Google Places API failed', details: errorText });
+  }
+
+  const details = await apiResponse.json() as PlaceDetails;
+
+  // Extract address components
+  const streetNumber = extractAddressComponent(details.addressComponents, 'street_number');
+  const route = extractAddressComponent(details.addressComponents, 'route');
+  const state = extractAddressComponent(details.addressComponents, 'administrative_area_level_1');
+  const hasWebsite = !!details.websiteUri;
+
+  // Build update expression
+  const updateFields: Record<string, unknown> = {
+    address: details.formattedAddress || '',
+    city: extractCity(details.formattedAddress || ''),
+    state: state,
+    street: [streetNumber, route].filter(Boolean).join(' '),
+    zip_code: extractAddressComponent(details.addressComponents, 'postal_code'),
+    phone: details.nationalPhoneNumber || '',
+    rating: details.rating || null,
+    rating_count: details.userRatingCount || null,
+    hours: details.regularOpeningHours?.weekdayDescriptions?.join('; ') || '',
+    google_maps_uri: details.googleMapsUri || '',
+    latitude: details.location?.latitude || null,
+    longitude: details.location?.longitude || null,
+    website_uri: details.websiteUri || null,
+    primary_type: details.primaryType || null,
+    business_name: details.displayName?.text || business.business_name,
+    friendly_slug: `${(details.displayName?.text || business.business_name || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${placeId.slice(-8)}`,
+    details_fetched: true,
+    has_website: hasWebsite,
+    details_fetched_at: new Date().toISOString(),
+  };
+
+  const updateParts: string[] = [];
+  const expressionNames: Record<string, string> = {};
+  const expressionValues: Record<string, unknown> = {};
+
+  Object.entries(updateFields).forEach(([key, value], index) => {
+    if (value !== undefined) {
+      updateParts.push(`#attr${index} = :val${index}`);
+      expressionNames[`#attr${index}`] = key;
+      expressionValues[`:val${index}`] = value;
+    }
+  });
+
+  await docClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
+
+  console.log(`Details fetched successfully for: ${business.business_name}`);
+
+  // Return the updated business
+  const updatedResult = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+
+  return response(200, updatedResult.Item);
+}
+
+/**
+ * POST /businesses/{place_id}/generate-reviews
+ * Fetches reviews from Google Places API (Enterprise+Atmosphere tier: $25/1000)
+ */
+async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2> {
+  if (!GOOGLE_API_KEY) {
+    return response(500, { error: 'Google API key not configured' });
+  }
+
+  // Get the business to verify it exists
+  const getCommand = new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  });
+  
+  const result = await docClient.send(getCommand);
+  
+  if (!result.Item) {
+    return response(404, { error: 'Business not found' });
+  }
+
+  const business = result.Item as Business;
+  console.log(`Fetching reviews for: ${business.business_name}`);
+
+  // Call Google Places API
+  const url = `https://places.googleapis.com/v1/places/${placeId}`;
+  const fieldMask = 'reviews,editorialSummary';
+
+  const apiResponse = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-FieldMask': fieldMask,
+    },
+  });
+
+  if (!apiResponse.ok) {
+    const errorText = await apiResponse.text();
+    console.error(`Places API failed: ${apiResponse.status} - ${errorText}`);
+    return response(500, { error: 'Google Places API failed', details: errorText });
+  }
+
+  const enrichment = await apiResponse.json() as PlaceEnrichment;
+
+  // Transform reviews
+  const reviews = (enrichment.reviews || [])
+    .slice(0, 5)
+    .filter(r => r.text?.text)
+    .map(r => ({
+      text: r.text?.text || '',
+      authorName: r.authorAttribution?.displayName || 'Anonymous',
+      authorDisplayName: formatAuthorDisplayName(r.authorAttribution?.displayName || ''),
+      authorUri: r.authorAttribution?.uri || '',
+      rating: r.rating,
+      relativeTime: r.relativePublishTimeDescription,
+    }));
+
+  // Build update expression
+  const updateFields: Record<string, unknown> = {
+    reviews: JSON.stringify(reviews),
+    editorial_summary: enrichment.editorialSummary?.text || '',
+    review_count: reviews.length,
+    reviews_fetched: true,
+    reviews_fetched_at: new Date().toISOString(),
+  };
+
+  const updateParts: string[] = [];
+  const expressionNames: Record<string, string> = {};
+  const expressionValues: Record<string, unknown> = {};
+
+  Object.entries(updateFields).forEach(([key, value], index) => {
+    updateParts.push(`#attr${index} = :val${index}`);
+    expressionNames[`#attr${index}`] = key;
+    expressionValues[`:val${index}`] = value;
+  });
+
+  await docClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
+
+  console.log(`Reviews fetched successfully for: ${business.business_name} (${reviews.length} reviews)`);
+
+  // Return the updated business
+  const updatedResult = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+
+  return response(200, updatedResult.Item);
+}
+
+/**
+ * POST /businesses/{place_id}/generate-photos
+ * Fetches photos from Google Places API ($7/1000)
+ */
+async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2> {
+  if (!GOOGLE_API_KEY) {
+    return response(500, { error: 'Google API key not configured' });
+  }
+
+  // Get the business to verify it exists
+  const getCommand = new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  });
+  
+  const result = await docClient.send(getCommand);
+  
+  if (!result.Item) {
+    return response(404, { error: 'Business not found' });
+  }
+
+  const business = result.Item as Business;
+  console.log(`Fetching photos for: ${business.business_name}`);
+
+  // Call Google Places API
+  const url = `https://places.googleapis.com/v1/places/${placeId}`;
+  const fieldMask = 'photos';
+
+  const apiResponse = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-FieldMask': fieldMask,
+    },
+  });
+
+  if (!apiResponse.ok) {
+    const errorText = await apiResponse.text();
+    console.error(`Places API failed: ${apiResponse.status} - ${errorText}`);
+    return response(500, { error: 'Google Places API failed', details: errorText });
+  }
+
+  const photos = await apiResponse.json() as PlacePhotos;
+
+  // Build photo URLs (max 5 photos)
+  const photoUrls = (photos.photos || [])
+    .slice(0, 5)
+    .map(photo => buildPhotoUrl(photo.name));
+
+  // Build update expression
+  const updateFields: Record<string, unknown> = {
+    photo_urls: JSON.stringify(photoUrls),
+    photo_count: photoUrls.length,
+    photos_fetched: true,
+    photos_fetched_at: new Date().toISOString(),
+  };
+
+  const updateParts: string[] = [];
+  const expressionNames: Record<string, string> = {};
+  const expressionValues: Record<string, unknown> = {};
+
+  Object.entries(updateFields).forEach(([key, value], index) => {
+    updateParts.push(`#attr${index} = :val${index}`);
+    expressionNames[`#attr${index}`] = key;
+    expressionValues[`:val${index}`] = value;
+  });
+
+  await docClient.send(new UpdateCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+    UpdateExpression: `SET ${updateParts.join(', ')}`,
+    ExpressionAttributeNames: expressionNames,
+    ExpressionAttributeValues: expressionValues,
+  }));
+
+  console.log(`Photos fetched successfully for: ${business.business_name} (${photoUrls.length} photos)`);
+
+  // Return the updated business
+  const updatedResult = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+
   return response(200, updatedResult.Item);
 }
 

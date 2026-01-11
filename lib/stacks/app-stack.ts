@@ -95,17 +95,17 @@ export class AppStack extends cdk.Stack {
     });
 
     // ============================================================
-    // Places Task Definition (Google Places API polling)
+    // Search Task Definition (Google Places Text Search - Pro tier)
     // ============================================================
-    const placesTaskDef = new ecs.FargateTaskDefinition(this, 'PlacesTaskDef', {
+    const searchTaskDef = new ecs.FargateTaskDefinition(this, 'SearchTaskDef', {
       memoryLimitMiB: 512,
-      cpu: 256, // 0.25 vCPU - lightweight!
+      cpu: 256,
     });
 
-    placesTaskDef.addContainer('places', {
-      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/places-task')),
+    searchTaskDef.addContainer('search', {
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/search-task')),
       logging: ecs.LogDrivers.awsLogs({ 
-        streamPrefix: 'places',
+        streamPrefix: 'search',
         logRetention: logs.RetentionDays.ONE_WEEK,
       }),
       secrets: {
@@ -117,7 +117,82 @@ export class AppStack extends cdk.Stack {
       },
     });
 
-    businessesTable.grantReadWriteData(placesTaskDef.taskRole);
+    businessesTable.grantReadWriteData(searchTaskDef.taskRole);
+
+    // ============================================================
+    // Details Task Definition (Google Places Details - Enterprise tier)
+    // ============================================================
+    const detailsTaskDef = new ecs.FargateTaskDefinition(this, 'DetailsTaskDef', {
+      memoryLimitMiB: 512,
+      cpu: 256,
+    });
+
+    detailsTaskDef.addContainer('details', {
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/details-task')),
+      logging: ecs.LogDrivers.awsLogs({ 
+        streamPrefix: 'details',
+        logRetention: logs.RetentionDays.ONE_WEEK,
+      }),
+      secrets: {
+        GOOGLE_API_KEY: ecs.Secret.fromSecretsManager(googleSecret),
+      },
+      environment: {
+        BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        AWS_REGION: this.region,
+      },
+    });
+
+    businessesTable.grantReadWriteData(detailsTaskDef.taskRole);
+
+    // ============================================================
+    // Enrich Task Definition (Google Places Reviews - Enterprise+Atmosphere tier)
+    // ============================================================
+    const enrichTaskDef = new ecs.FargateTaskDefinition(this, 'EnrichTaskDef', {
+      memoryLimitMiB: 512,
+      cpu: 256,
+    });
+
+    enrichTaskDef.addContainer('enrich', {
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/enrich-task')),
+      logging: ecs.LogDrivers.awsLogs({ 
+        streamPrefix: 'enrich',
+        logRetention: logs.RetentionDays.ONE_WEEK,
+      }),
+      secrets: {
+        GOOGLE_API_KEY: ecs.Secret.fromSecretsManager(googleSecret),
+      },
+      environment: {
+        BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        AWS_REGION: this.region,
+      },
+    });
+
+    businessesTable.grantReadWriteData(enrichTaskDef.taskRole);
+
+    // ============================================================
+    // Photos Task Definition (Google Places Photos)
+    // ============================================================
+    const photosTaskDef = new ecs.FargateTaskDefinition(this, 'PhotosTaskDef', {
+      memoryLimitMiB: 512,
+      cpu: 256,
+    });
+
+    photosTaskDef.addContainer('photos', {
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/photos-task')),
+      logging: ecs.LogDrivers.awsLogs({ 
+        streamPrefix: 'photos',
+        logRetention: logs.RetentionDays.ONE_WEEK,
+      }),
+      secrets: {
+        GOOGLE_API_KEY: ecs.Secret.fromSecretsManager(googleSecret),
+      },
+      environment: {
+        BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        AWS_REGION: this.region,
+      },
+    });
+
+    businessesTable.grantReadWriteData(photosTaskDef.taskRole);
 
     // ============================================================
     // Copy Task Definition (LLM copy generation)
@@ -145,22 +220,76 @@ export class AppStack extends cdk.Stack {
     businessesTable.grantReadWriteData(copyTaskDef.taskRole);
 
     // ============================================================
-    // Step Functions State Machine
+    // Step Functions State Machine (Task Flag Pattern)
     // ============================================================
-    const runPlacesTask = new tasks.EcsRunTask(this, 'RunPlacesTask', {
+    
+    // Task definitions for each pipeline step
+    const runSearchTask = new tasks.EcsRunTask(this, 'RunSearchTask', {
       integrationPattern: sfn.IntegrationPattern.RUN_JOB,
       cluster,
-      taskDefinition: placesTaskDef,
+      taskDefinition: searchTaskDef,
       launchTarget: new tasks.EcsFargateLaunchTarget({
         platformVersion: ecs.FargatePlatformVersion.LATEST,
       }),
       containerOverrides: [{
-        containerDefinition: placesTaskDef.defaultContainer!,
+        containerDefinition: searchTaskDef.defaultContainer!,
         environment: [
           { name: 'JOB_INPUT', value: sfn.JsonPath.stringAt('States.JsonToString($)') },
         ],
       }],
       assignPublicIp: true,
+      resultPath: '$.searchResult',
+    });
+
+    const runDetailsTask = new tasks.EcsRunTask(this, 'RunDetailsTask', {
+      integrationPattern: sfn.IntegrationPattern.RUN_JOB,
+      cluster,
+      taskDefinition: detailsTaskDef,
+      launchTarget: new tasks.EcsFargateLaunchTarget({
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+      }),
+      containerOverrides: [{
+        containerDefinition: detailsTaskDef.defaultContainer!,
+        environment: [
+          { name: 'JOB_INPUT', value: sfn.JsonPath.stringAt('States.JsonToString($)') },
+        ],
+      }],
+      assignPublicIp: true,
+      resultPath: '$.detailsResult',
+    });
+
+    const runEnrichTask = new tasks.EcsRunTask(this, 'RunEnrichTask', {
+      integrationPattern: sfn.IntegrationPattern.RUN_JOB,
+      cluster,
+      taskDefinition: enrichTaskDef,
+      launchTarget: new tasks.EcsFargateLaunchTarget({
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+      }),
+      containerOverrides: [{
+        containerDefinition: enrichTaskDef.defaultContainer!,
+        environment: [
+          { name: 'JOB_INPUT', value: sfn.JsonPath.stringAt('States.JsonToString($)') },
+        ],
+      }],
+      assignPublicIp: true,
+      resultPath: '$.enrichResult',
+    });
+
+    const runPhotosTask = new tasks.EcsRunTask(this, 'RunPhotosTask', {
+      integrationPattern: sfn.IntegrationPattern.RUN_JOB,
+      cluster,
+      taskDefinition: photosTaskDef,
+      launchTarget: new tasks.EcsFargateLaunchTarget({
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+      }),
+      containerOverrides: [{
+        containerDefinition: photosTaskDef.defaultContainer!,
+        environment: [
+          { name: 'JOB_INPUT', value: sfn.JsonPath.stringAt('States.JsonToString($)') },
+        ],
+      }],
+      assignPublicIp: true,
+      resultPath: '$.photosResult',
     });
 
     const runCopyTask = new tasks.EcsRunTask(this, 'RunCopyTask', {
@@ -177,38 +306,37 @@ export class AppStack extends cdk.Stack {
         ],
       }],
       assignPublicIp: true,
+      resultPath: '$.copyResult',
     });
 
-    // For "both", we need a separate places task to avoid mutating the original
-    const runPlacesTaskForBoth = new tasks.EcsRunTask(this, 'RunPlacesTaskForBoth', {
-      integrationPattern: sfn.IntegrationPattern.RUN_JOB,
-      cluster,
-      taskDefinition: placesTaskDef,
-      launchTarget: new tasks.EcsFargateLaunchTarget({
-        platformVersion: ecs.FargatePlatformVersion.LATEST,
-      }),
-      containerOverrides: [{
-        containerDefinition: placesTaskDef.defaultContainer!,
-        environment: [
-          { name: 'JOB_INPUT', value: sfn.JsonPath.stringAt('States.JsonToString($)') },
-        ],
-      }],
-      assignPublicIp: true,
-    });
+    // End state
+    const pipelineComplete = new sfn.Succeed(this, 'PipelineComplete');
 
-    const jobType = new sfn.Choice(this, 'CheckJobType')
-      .when(sfn.Condition.stringEquals('$.jobType', 'places'), runPlacesTask)
-      .when(sfn.Condition.stringEquals('$.jobType', 'copy'), runCopyTask)
-      .when(sfn.Condition.stringEquals('$.jobType', 'both'), 
-        runPlacesTaskForBoth.next(runCopyTask))
-      .otherwise(new sfn.Fail(this, 'InvalidJobType', {
-        error: 'InvalidJobType',
-        cause: 'jobType must be "places", "copy", or "both"',
-      }));
+    // Build the state machine with task flag checks
+    // Each step checks if its flag is set and proceeds accordingly
+    
+    const checkCopy = new sfn.Choice(this, 'CheckRunCopy')
+      .when(sfn.Condition.booleanEquals('$.runCopy', true), runCopyTask.next(pipelineComplete))
+      .otherwise(pipelineComplete);
+
+    const checkPhotos = new sfn.Choice(this, 'CheckRunPhotos')
+      .when(sfn.Condition.booleanEquals('$.runPhotos', true), runPhotosTask.next(checkCopy))
+      .otherwise(checkCopy);
+
+    const checkEnrich = new sfn.Choice(this, 'CheckRunEnrich')
+      .when(sfn.Condition.booleanEquals('$.runEnrich', true), runEnrichTask.next(checkPhotos))
+      .otherwise(checkPhotos);
+
+    const checkDetails = new sfn.Choice(this, 'CheckRunDetails')
+      .when(sfn.Condition.booleanEquals('$.runDetails', true), runDetailsTask.next(checkEnrich))
+      .otherwise(checkEnrich);
+
+    const checkSearch = new sfn.Choice(this, 'CheckRunSearch')
+      .when(sfn.Condition.booleanEquals('$.runSearch', true), runSearchTask.next(checkDetails))
+      .otherwise(checkDetails);
 
     const stateMachine = new sfn.StateMachine(this, 'PipelineStateMachine', {
-      // Let CDK generate the name for uniqueness
-      definitionBody: sfn.DefinitionBody.fromChainable(jobType),
+      definitionBody: sfn.DefinitionBody.fromChainable(checkSearch),
       timeout: cdk.Duration.hours(2),
       tracingEnabled: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -280,17 +408,19 @@ export class AppStack extends cdk.Stack {
       code: lambda.DockerImageCode.fromImageAsset(
         path.join(__dirname, '../../src/config-lambda')
       ),
-      timeout: cdk.Duration.seconds(60), // Increased for LLM calls
+      timeout: cdk.Duration.seconds(60), // Increased for LLM and API calls
       memorySize: 512,
       logGroup: configLogGroup,
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         CLAUDE_API_KEY: claudeSecret.secretValue.unsafeUnwrap(),
+        GOOGLE_API_KEY: googleSecret.secretValue.unsafeUnwrap(),
       },
     });
 
     businessesTable.grantReadWriteData(configLambda);
     claudeSecret.grantRead(configLambda);
+    googleSecret.grantRead(configLambda);
 
     const jobsLogGroup = new logs.LogGroup(this, 'JobsLambdaLogs', {
       retention: logs.RetentionDays.ONE_WEEK,
@@ -427,6 +557,27 @@ export class AppStack extends cdk.Stack {
 
     httpApi.addRoutes({
       path: '/businesses/{place_id}/generate-copy',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: configIntegration,
+      authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/businesses/{place_id}/generate-details',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: configIntegration,
+      authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/businesses/{place_id}/generate-reviews',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: configIntegration,
+      authorizer,
+    });
+
+    httpApi.addRoutes({
+      path: '/businesses/{place_id}/generate-photos',
       methods: [apigwv2.HttpMethod.POST],
       integration: configIntegration,
       authorizer,
