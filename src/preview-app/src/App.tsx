@@ -147,6 +147,13 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Notify parent window when content is ready (not loading/generating)
+  useEffect(() => {
+    if (data && !isLoading && !isResolvingId && window.parent !== window) {
+      window.parent.postMessage({ type: 'contentReady' }, '*');
+    }
+  }, [data, isLoading, isResolvingId]);
+
   // Loading state - engaging animation for potentially long generation
   if (isResolvingId || isLoading) {
     return (

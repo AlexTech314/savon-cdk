@@ -10,6 +10,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 export default function PreviewPage() {
   const { id } = useParams<{ id: string }>();
   const [isLoading, setIsLoading] = useState(true);
+  const [isContentReady, setIsContentReady] = useState(false); // True when preview-app content is loaded
   const [hasError, setHasError] = useState(false);
   const [showInterestModal, setShowInterestModal] = useState(false);
   const hasTriggeredModal = useRef(false);
@@ -22,6 +23,7 @@ export default function PreviewPage() {
 
   const handleLoad = () => {
     setIsLoading(false);
+    // Note: iframe loaded, but content inside might still be generating
   };
 
   const handleError = () => {
@@ -29,10 +31,15 @@ export default function PreviewPage() {
     setHasError(true);
   };
 
-  // Listen for scroll events from iframe
+  // Listen for messages from iframe (scroll events and ready state)
   const handleMessage = useCallback((event: MessageEvent) => {
-    // Only handle scroll messages from our preview app
-    if (event.data?.type === 'scroll' && !hasTriggeredModal.current) {
+    // Content is ready - preview-app has finished loading/generating
+    if (event.data?.type === 'contentReady') {
+      setIsContentReady(true);
+    }
+    
+    // Only handle scroll messages if content is ready and modal hasn't triggered
+    if (event.data?.type === 'scroll' && isContentReady && !hasTriggeredModal.current) {
       const scrollY = event.data.scrollY || 0;
       // Show modal when user scrolls past 300px
       if (scrollY > 300) {
@@ -40,27 +47,27 @@ export default function PreviewPage() {
         setShowInterestModal(true);
       }
     }
-  }, []);
+  }, [isContentReady]);
 
   useEffect(() => {
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, [handleMessage]);
 
-  // Also detect scroll via intersection observer as backup
+  // Fallback: show modal after 15 seconds if content is ready
   useEffect(() => {
-    if (isLoading || hasTriggeredModal.current) return;
+    if (!isContentReady || hasTriggeredModal.current) return;
     
-    // Fallback: show modal after 8 seconds if still on page
+    // Only show modal after content is fully ready + user has been viewing for a bit
     const timer = setTimeout(() => {
       if (!hasTriggeredModal.current) {
         hasTriggeredModal.current = true;
         setShowInterestModal(true);
       }
-    }, 8000);
+    }, 15000); // 15 seconds after content is ready
 
     return () => clearTimeout(timer);
-  }, [isLoading]);
+  }, [isContentReady]);
 
   if (!id) {
     return (
