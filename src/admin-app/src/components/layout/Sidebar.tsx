@@ -28,7 +28,7 @@ const navItems = [
   { path: '/businesses/import', label: 'Import/Export', icon: Upload, exact: true },
   { path: '/jobs', label: 'Jobs', icon: Briefcase, exact: false },
   { path: '/settings/pricing', label: 'Pricing', icon: DollarSign, exact: true },
-  { path: '/settings', label: 'Settings', icon: Settings, exact: false },
+  { path: '/settings', label: 'Settings', icon: Settings, exact: true },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ collapsed, onToggle }) => {
