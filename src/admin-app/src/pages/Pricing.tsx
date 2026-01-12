@@ -99,7 +99,7 @@ const Pricing: React.FC = () => {
               <TableRow>
                 <TableCell className="font-medium">Search Query</TableCell>
                 <TableCell className="text-muted-foreground">Google Text Search API</TableCell>
-                <TableCell className="text-right font-mono">{formatCost(PRICING.google.textSearch)}</TableCell>
+                <TableCell className="text-right font-mono">{formatCost(PRICING.google.textSearch.pricePerRequest)}</TableCell>
               </TableRow>
             </TableBody>
           </Table>
@@ -131,7 +131,7 @@ const Pricing: React.FC = () => {
               <TableRow>
                 <TableCell className="font-medium">Text Search (Pro)</TableCell>
                 <TableCell className="text-muted-foreground">Search for places by query</TableCell>
-                <TableCell className="text-right font-mono">{formatCost(PRICING.google.textSearch)}</TableCell>
+                <TableCell className="text-right font-mono">{formatCost(PRICING.google.textSearch.pricePerRequest)}</TableCell>
                 <TableCell className="text-right font-mono">$32.00</TableCell>
               </TableRow>
               <TableRow>
@@ -156,7 +156,7 @@ const Pricing: React.FC = () => {
           </Table>
           <p className="mt-4 text-sm text-muted-foreground">
             <Badge variant="secondary" className="mr-2">Free Tier</Badge>
-            {PRICING.google.freeMonthly.toLocaleString()} requests/month per SKU
+            $200/month in Google Maps Platform credits
           </p>
         </CardContent>
       </Card>
