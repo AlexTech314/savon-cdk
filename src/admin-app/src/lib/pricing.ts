@@ -166,7 +166,11 @@ export interface PricingSource {
 /**
  * Format a cost value as USD currency
  */
-export function formatCost(cost: number): string {
+export function formatCost(cost: number | undefined | null): string {
+  // Handle undefined/null/NaN
+  if (cost == null || isNaN(cost)) {
+    return '$0.00';
+  }
   if (cost < 0.01) {
     return `$${cost.toFixed(4)}`;
   }
@@ -603,14 +607,18 @@ const TIER_LABELS: Record<DataTier, string> = {
  * @param currentMonthlyRequests - Current monthly requests for volume discount
  */
 export function estimateCampaignCost(
-  numSearches: number,
-  maxResultsPerSearch: number,
+  numSearches: number | undefined,
+  maxResultsPerSearch: number | undefined,
   dataTier: DataTier = 'enterprise',
   currentMonthlyRequests: number = 0
 ): CostBreakdown {
-  const pagesPerSearch = calculatePagesNeeded(maxResultsPerSearch);
-  const totalApiCalls = numSearches * pagesPerSearch;
-  const estimatedResults = Math.min(numSearches * maxResultsPerSearch, numSearches * 60);
+  // Defensive: ensure we have valid numbers
+  const safeNumSearches = typeof numSearches === 'number' ? numSearches : 0;
+  const safeMaxResults = typeof maxResultsPerSearch === 'number' ? maxResultsPerSearch : 60;
+  
+  const pagesPerSearch = calculatePagesNeeded(safeMaxResults);
+  const totalApiCalls = safeNumSearches * pagesPerSearch;
+  const estimatedResults = Math.min(safeNumSearches * safeMaxResults, safeNumSearches * 60);
   
   // Get tier-specific pricing
   const tierPricing = PRICING.google.textSearch.tierPricing as Record<DataTier, number>;
@@ -637,8 +645,8 @@ export function estimateCampaignCost(
   
   const formattedBreakdown = [
     `Data Tier: ${TIER_LABELS[dataTier]} ($${(unitCost * 1000).toFixed(0)}/1000)`,
-    `Queries: ${numSearches.toLocaleString()}`,
-    `Max results/query: ${maxResultsPerSearch} (${pagesPerSearch} page${pagesPerSearch > 1 ? 's' : ''})`,
+    `Queries: ${safeNumSearches.toLocaleString()}`,
+    `Max results/query: ${safeMaxResults} (${pagesPerSearch} page${pagesPerSearch > 1 ? 's' : ''})`,
     `Total API calls: ${totalApiCalls.toLocaleString()}`,
     `Est. businesses found: up to ${estimatedResults.toLocaleString()}`,
   ];
