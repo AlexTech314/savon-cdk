@@ -1,7 +1,8 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBClient, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import { 
   DynamoDBDocumentClient, 
   ScanCommand, 
+  QueryCommand,
   GetCommand, 
   PutCommand, 
   DeleteCommand,
@@ -227,10 +228,103 @@ async function listBusinesses(
   const pipelineStatusFilter = queryParams?.pipeline_status;
   const hasWebsiteFilter = queryParams?.has_website;
   
-  // Check if any filters are active
-  const hasFilters = searchTerm || businessTypeFilter || stateFilter || pipelineStatusFilter || hasWebsiteFilter;
+  // Check if any filters are active (excluding free text search)
+  const hasStructuredFilters = businessTypeFilter || stateFilter || pipelineStatusFilter || hasWebsiteFilter;
+  const hasAnyFilters = searchTerm || hasStructuredFilters;
 
-  // Scan all items (we need to scan all to apply filters properly)
+  let items: Record<string, unknown>[] = [];
+  let totalCount: number;
+
+  // FAST PATH: No filters at all - use native DynamoDB pagination
+  if (!hasAnyFilters) {
+    // Get approximate total count from table metadata (instant, no scan)
+    const tableInfo = await client.send(new DescribeTableCommand({ TableName: TABLE_NAME }));
+    totalCount = tableInfo.Table?.ItemCount || 0;
+
+    // For pagination beyond page 1, we need to scan with offset
+    // This is still faster than loading everything into memory
+    const offset = (page - 1) * limit;
+    let scannedCount = 0;
+    let lastKey: Record<string, unknown> | undefined;
+
+    // Skip pages we don't need
+    while (scannedCount < offset) {
+      const skipCommand = new ScanCommand({
+        TableName: TABLE_NAME,
+        Limit: Math.min(1000, offset - scannedCount),
+        ExclusiveStartKey: lastKey,
+      });
+      const result = await docClient.send(skipCommand);
+      scannedCount += result.Items?.length || 0;
+      lastKey = result.LastEvaluatedKey;
+      if (!lastKey) break;
+    }
+
+    // Now get the page we want
+    const command = new ScanCommand({
+      TableName: TABLE_NAME,
+      Limit: limit,
+      ExclusiveStartKey: lastKey,
+    });
+    const result = await docClient.send(command);
+    items = result.Items || [];
+
+    return response(200, {
+      items,
+      count: totalCount,
+      countIsApproximate: true, // Let UI know this is approximate
+      page,
+      limit,
+    });
+  }
+
+  // GSI PATH: Use GSI for single structured filter (no free text search)
+  if (hasStructuredFilters && !searchTerm) {
+    // Priority: pipeline_status > has_website > state > business_type
+    // Pick the most selective GSI and filter the rest in memory
+    
+    if (pipelineStatusFilter) {
+      // Map UI filter values to actual pipeline_status values
+      const statusValue = pipelineStatusFilter === 'copy' ? 'complete' : pipelineStatusFilter;
+      items = await queryGSI('by-pipeline-status', 'pipeline_status', statusValue);
+    } else if (hasWebsiteFilter !== undefined) {
+      items = await queryGSI('by-has-website', 'has_website_str', hasWebsiteFilter);
+    } else if (stateFilter) {
+      items = await queryGSI('by-state', 'state', stateFilter.toUpperCase());
+    } else if (businessTypeFilter) {
+      // by-type-state GSI has business_type as partition key
+      items = await queryGSI('by-type-state', 'business_type', businessTypeFilter.toLowerCase());
+    }
+
+    // Apply any remaining filters in memory
+    if (businessTypeFilter && !items[0]?.business_type?.toString().toLowerCase().includes(businessTypeFilter.toLowerCase())) {
+      items = items.filter(item => 
+        String(item.business_type || '').toLowerCase() === businessTypeFilter.toLowerCase()
+      );
+    }
+    if (stateFilter && pipelineStatusFilter) {
+      items = items.filter(item => 
+        String(item.state || '').toUpperCase() === stateFilter.toUpperCase()
+      );
+    }
+    if (hasWebsiteFilter !== undefined && pipelineStatusFilter) {
+      const hasWebsite = hasWebsiteFilter === 'true';
+      items = items.filter(item => hasWebsite ? item.has_website : !item.has_website);
+    }
+    
+    totalCount = items.length;
+    const offset = (page - 1) * limit;
+    const paginatedItems = items.slice(offset, offset + limit);
+
+    return response(200, {
+      items: paginatedItems,
+      count: totalCount,
+      page,
+      limit,
+    });
+  }
+
+  // SLOW PATH: Free text search requires full table scan
   const allItems: Record<string, unknown>[] = [];
   let scanLastKey: Record<string, unknown> | undefined;
   
@@ -245,9 +339,9 @@ async function listBusinesses(
     scanLastKey = result.LastEvaluatedKey;
   } while (scanLastKey);
   
-  let items = allItems;
+  items = allItems;
   
-  // Apply search filter if provided
+  // Apply free text search filter
   if (searchTerm) {
     items = items.filter(item => {
       const searchableFields = ['business_name', 'city', 'state', 'business_type', 'address'];
@@ -257,64 +351,66 @@ async function listBusinesses(
     });
   }
   
-  // Apply business type filter
+  // Apply structured filters on top of search results
   if (businessTypeFilter) {
     items = items.filter(item => 
       String(item.business_type || '').toLowerCase() === businessTypeFilter.toLowerCase()
     );
   }
-  
-  // Apply state filter
   if (stateFilter) {
     items = items.filter(item => 
       String(item.state || '').toUpperCase() === stateFilter.toUpperCase()
     );
   }
-  
-  // Apply pipeline status filter
   if (pipelineStatusFilter) {
-    items = items.filter(item => {
-      switch (pipelineStatusFilter) {
-        case 'searched':
-          return item.searched && !item.details_fetched;
-        case 'details':
-          return item.details_fetched && !item.reviews_fetched;
-        case 'reviews':
-          return item.reviews_fetched && !item.copy_generated;
-        case 'photos':
-          return item.photos_fetched;
-        case 'copy':
-        case 'complete':
-          return item.copy_generated;
-        case 'has_website':
-          return item.has_website;
-        default:
-          return true;
-      }
-    });
+    items = items.filter(item => 
+      String(item.pipeline_status || '') === (pipelineStatusFilter === 'copy' ? 'complete' : pipelineStatusFilter)
+    );
   }
-  
-  // Apply has_website filter
   if (hasWebsiteFilter !== undefined) {
     const hasWebsite = hasWebsiteFilter === 'true';
     items = items.filter(item => hasWebsite ? item.has_website : !item.has_website);
   }
   
-  // Get filtered count for pagination
-  const filteredCount = items.length;
-  
-  // Calculate offset for page-based pagination
+  totalCount = items.length;
   const offset = (page - 1) * limit;
-  
-  // Apply pagination
   const paginatedItems = items.slice(offset, offset + limit);
   
   return response(200, {
     items: paginatedItems,
-    count: filteredCount,
+    count: totalCount,
     page,
     limit,
   });
+}
+
+/**
+ * Query a GSI and return all matching items
+ */
+async function queryGSI(
+  indexName: string, 
+  partitionKeyName: string, 
+  partitionKeyValue: string
+): Promise<Record<string, unknown>[]> {
+  const items: Record<string, unknown>[] = [];
+  let lastKey: Record<string, unknown> | undefined;
+
+  do {
+    const command = new QueryCommand({
+      TableName: TABLE_NAME,
+      IndexName: indexName,
+      KeyConditionExpression: '#pk = :pkVal',
+      ExpressionAttributeNames: { '#pk': partitionKeyName },
+      ExpressionAttributeValues: { ':pkVal': partitionKeyValue },
+      ExclusiveStartKey: lastKey,
+    });
+
+    const result = await docClient.send(command);
+    items.push(...(result.Items || []));
+    lastKey = result.LastEvaluatedKey;
+  } while (lastKey);
+
+  return items;
 }
 
 async function getBusiness(placeId: string): Promise<APIGatewayProxyResultV2> {
@@ -963,14 +1059,16 @@ async function generateCopy(placeId: string): Promise<APIGatewayProxyResultV2> {
   const flatCopy = flattenCopy(copy);
   
   // Build update expression
-  const updateParts: string[] = ['#copy_generated = :true', '#updated_at = :now'];
+  const updateParts: string[] = ['#copy_generated = :true', '#updated_at = :now', '#pipeline_status = :complete'];
   const expressionNames: Record<string, string> = {
     '#copy_generated': 'copy_generated',
     '#updated_at': 'updated_at',
+    '#pipeline_status': 'pipeline_status',
   };
   const expressionValues: Record<string, unknown> = {
     ':true': true,
     ':now': new Date().toISOString(),
+    ':complete': 'complete',
   };
   
   Object.entries(flatCopy).forEach(([key, value], index) => {
@@ -1153,6 +1251,8 @@ async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2
     friendly_slug: `${(details.displayName?.text || business.business_name || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${placeId.slice(-8)}`,
     details_fetched: true,
     has_website: hasWebsite,
+    has_website_str: hasWebsite ? 'true' : 'false', // String for GSI
+    pipeline_status: 'details', // Denormalized for GSI
     details_fetched_at: new Date().toISOString(),
   };
 
@@ -1267,6 +1367,7 @@ async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2
     editorial_summary: enrichment.editorialSummary?.text || '',
     review_count: reviews.length,
     reviews_fetched: true,
+    pipeline_status: 'reviews', // Denormalized for GSI
     reviews_fetched_at: new Date().toISOString(),
   };
 
@@ -1370,6 +1471,7 @@ async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2>
     photo_urls: JSON.stringify(photoUrls),
     photo_count: photoUrls.length,
     photos_fetched: true,
+    pipeline_status: 'photos', // Denormalized for GSI
     photos_fetched_at: new Date().toISOString(),
   };
 
@@ -1575,6 +1677,8 @@ async function fetchDetailsInternal(placeId: string): Promise<void> {
     friendly_slug: `${(details.displayName?.text || business.business_name || 'business').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${placeId.slice(-8)}`,
     details_fetched: true,
     has_website: !!details.websiteUri,
+    has_website_str: details.websiteUri ? 'true' : 'false', // String for GSI
+    pipeline_status: 'details', // Denormalized for GSI
     details_fetched_at: new Date().toISOString(),
   };
 
@@ -1662,6 +1766,7 @@ async function fetchReviewsInternal(placeId: string): Promise<void> {
     editorial_summary: enrichment.editorialSummary?.text || '',
     review_count: reviews.length,
     reviews_fetched: true,
+    pipeline_status: 'reviews', // Denormalized for GSI
     reviews_fetched_at: new Date().toISOString(),
   };
 
@@ -1726,14 +1831,16 @@ async function generateCopyInternal(placeId: string): Promise<void> {
   const copy = JSON.parse(textContent.text) as LandingPageCopy;
   const flatCopy = flattenCopy(copy);
 
-  const updateParts: string[] = ['#copy_generated = :true', '#updated_at = :now'];
+  const updateParts: string[] = ['#copy_generated = :true', '#updated_at = :now', '#pipeline_status = :complete'];
   const expressionNames: Record<string, string> = {
     '#copy_generated': 'copy_generated',
     '#updated_at': 'updated_at',
+    '#pipeline_status': 'pipeline_status',
   };
   const expressionValues: Record<string, unknown> = {
     ':true': true,
     ':now': new Date().toISOString(),
+    ':complete': 'complete',
   };
 
   Object.entries(flatCopy).forEach(([key, value], index) => {

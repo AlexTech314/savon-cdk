@@ -435,6 +435,7 @@ async function updateBusinessWithEnrichment(placeId: string, enrichment: PlaceEn
     
     // Pipeline status flags
     reviews_fetched: true,
+    pipeline_status: 'reviews', // Denormalized for GSI
     reviews_fetched_at: new Date().toISOString(),
   };
 

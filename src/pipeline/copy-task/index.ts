@@ -361,6 +361,11 @@ async function updateBusinessWithCopy(placeId: string, copyFields: Record<string
   expressionAttributeNames['#copyGen'] = 'copy_generated';
   expressionAttributeValues[':copyGenVal'] = true;
 
+  // Add pipeline_status for GSI
+  updateExpressionParts.push('#pipelineStatus = :pipelineStatusVal');
+  expressionAttributeNames['#pipelineStatus'] = 'pipeline_status';
+  expressionAttributeValues[':pipelineStatusVal'] = 'complete';
+
   // Add updated_at timestamp
   updateExpressionParts.push('#updatedAt = :updatedAtVal');
   expressionAttributeNames['#updatedAt'] = 'copy_updated_at';

@@ -401,6 +401,8 @@ async function updateBusinessWithDetails(placeId: string, details: PlaceDetails)
     // Pipeline status flags
     details_fetched: true,
     has_website: hasWebsite,
+    has_website_str: hasWebsite ? 'true' : 'false', // String version for GSI
+    pipeline_status: 'details', // Denormalized for GSI
     details_fetched_at: new Date().toISOString(),
   };
 

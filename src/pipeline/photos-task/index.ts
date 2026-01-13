@@ -319,6 +319,7 @@ async function updateBusinessWithPhotos(placeId: string, photos: PlacePhotos, ma
     
     // Pipeline status flags
     photos_fetched: true,
+    pipeline_status: 'photos', // Denormalized for GSI
     photos_fetched_at: new Date().toISOString(),
   };
 

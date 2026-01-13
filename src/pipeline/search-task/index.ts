@@ -497,7 +497,11 @@ function transformToSearchRecord(
     reviews_fetched: dataTier === 'enterprise_atmosphere',
     photos_fetched: false, // Photos always need separate task
     copy_generated: false,
-    
+
+    // Denormalized pipeline_status for GSI (searched -> details -> reviews -> photos -> complete)
+    pipeline_status: dataTier === 'enterprise_atmosphere' ? 'reviews' : 
+                     (dataTier === 'enterprise' ? 'details' : 'searched'),
+
     // Timestamps
     created_at: new Date().toISOString(),
     searched_at: new Date().toISOString(),
@@ -513,6 +517,7 @@ function transformToSearchRecord(
       international_phone: place.internationalPhoneNumber || null,
       website_uri: place.websiteUri || null,
       has_website: hasWebsite,
+      has_website_str: hasWebsite ? 'true' : 'false', // String version for GSI
       
       // Ratings & Pricing
       rating: place.rating || null,

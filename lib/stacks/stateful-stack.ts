@@ -37,6 +37,27 @@ export class StatefulStack extends cdk.Stack {
       partitionKey: { name: 'friendly_slug', type: dynamodb.AttributeType.STRING },
     });
 
+    // GSI for filtering by state alone
+    this.businessesTable.addGlobalSecondaryIndex({
+      indexName: 'by-state',
+      partitionKey: { name: 'state', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'business_name', type: dynamodb.AttributeType.STRING },
+    });
+
+    // GSI for filtering by pipeline_status (denormalized field: searched|details|reviews|photos|complete)
+    this.businessesTable.addGlobalSecondaryIndex({
+      indexName: 'by-pipeline-status',
+      partitionKey: { name: 'pipeline_status', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'business_name', type: dynamodb.AttributeType.STRING },
+    });
+
+    // GSI for filtering by has_website (string "true" or "false" for GSI compatibility)
+    this.businessesTable.addGlobalSecondaryIndex({
+      indexName: 'by-has-website',
+      partitionKey: { name: 'has_website_str', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'business_name', type: dynamodb.AttributeType.STRING },
+    });
+
     // ============================================================
     // Jobs Table
     // ============================================================
