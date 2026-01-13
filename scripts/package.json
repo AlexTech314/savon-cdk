@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "Migration and utility scripts",
   "scripts": {
-    "migrate": "ts-node migrate-campaigns-to-s3.ts"
+    "migrate": "ts-node migrate-campaigns-to-s3.ts",
+    "backfill-gsi": "ts-node backfill-gsi-fields.ts",
+    "backfill-gsi:dry": "DRY_RUN=true ts-node backfill-gsi-fields.ts"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
