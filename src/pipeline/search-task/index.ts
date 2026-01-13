@@ -345,8 +345,17 @@ async function searchPlaces(
 
   let consecutiveEmptyPages = 0;
   const MAX_EMPTY_PAGES = 3; // Stop after 3 consecutive empty pages with tokens
+  let pageNumber = 0;
+  let totalApiCalls = 0;
+  const searchStartTime = Date.now();
+
+  console.log(`    [Search Start] query="${query}", maxResults=${maxResults}, tier=${dataTier}`);
 
   do {
+    pageNumber++;
+    totalApiCalls++;
+    const pageStartTime = Date.now();
+
     const body: Record<string, unknown> = { 
       textQuery: query, 
       pageSize: 20,
@@ -354,7 +363,9 @@ async function searchPlaces(
     // Note: includedType intentionally not used - it causes missed leads
     if (pageToken) body.pageToken = pageToken;
     
-    console.log(`    API Request: ${JSON.stringify(body)}`);
+    // Log request with truncated token for readability
+    const tokenPreview = pageToken ? `${pageToken.slice(0, 20)}...` : 'none';
+    console.log(`    [Page ${pageNumber}] Requesting... (pageToken: ${tokenPreview})`);
     
     // Get next available key (waits if rate limited)
     const apiKey = await getNextApiKey();
@@ -369,40 +380,48 @@ async function searchPlaces(
       body: JSON.stringify(body),
     });
 
+    const responseTime = Date.now() - pageStartTime;
+
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`Places API search failed: ${response.status} - ${errorText}`);
+      console.error(`    [Page ${pageNumber}] ERROR: HTTP ${response.status} after ${responseTime}ms`);
+      console.error(`    Response: ${errorText.slice(0, 500)}`);
       break;
     }
 
     const data = await response.json() as SearchResponse;
     const placesReturned = data.places?.length || 0;
+    const hasNextToken = !!data.nextPageToken;
     
     if (placesReturned === 0) {
       consecutiveEmptyPages++;
-      console.log(`    API Response: No places returned (empty page ${consecutiveEmptyPages}/${MAX_EMPTY_PAGES}). Raw response keys: ${Object.keys(data).join(', ') || 'empty'}`);
+      console.log(`    [Page ${pageNumber}] EMPTY: 0 results in ${responseTime}ms (consecutive: ${consecutiveEmptyPages}/${MAX_EMPTY_PAGES}, hasNextToken: ${hasNextToken})`);
       
       if (consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
-        console.log(`    Stopping: ${MAX_EMPTY_PAGES} consecutive empty pages - likely exhausted results`);
+        console.log(`    [Search Stop] ${MAX_EMPTY_PAGES} consecutive empty pages - exhausted results`);
         break;
       }
     } else {
       consecutiveEmptyPages = 0; // Reset counter on successful page
+      console.log(`    [Page ${pageNumber}] OK: +${placesReturned} results in ${responseTime}ms (total: ${allPlaces.length + placesReturned}, hasNextToken: ${hasNextToken})`);
     }
     
     allPlaces.push(...(data.places || []));
     pageToken = data.nextPageToken;
     
-    console.log(`    Page fetched: ${placesReturned} results (total: ${allPlaces.length})${pageToken ? ' [has nextPageToken]' : ' [no more pages]'}`);
-    
     // Wait for token validity before next page (Google requires ~2s between paginated requests)
     if (pageToken && allPlaces.length < maxResults) {
-      console.log(`    Fetching next page (target: ${maxResults})...`);
+      console.log(`    [Page ${pageNumber}] Waiting 2s for next page...`);
       await new Promise(r => setTimeout(r, 2000));
     }
   } while (pageToken && allPlaces.length < maxResults);
   
-  console.log(`    Search complete: ${allPlaces.length} total results`);
+  const totalTime = ((Date.now() - searchStartTime) / 1000).toFixed(1);
+  const stopReason = !pageToken ? 'no more pages' : 
+                     allPlaces.length >= maxResults ? 'reached maxResults' : 
+                     consecutiveEmptyPages >= MAX_EMPTY_PAGES ? 'consecutive empty pages' : 'unknown';
+  
+  console.log(`    [Search Complete] ${allPlaces.length} results, ${totalApiCalls} API calls, ${totalTime}s total, stopReason: ${stopReason}`);
   
   return allPlaces.slice(0, maxResults);
 }
