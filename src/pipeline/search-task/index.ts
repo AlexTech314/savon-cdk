@@ -803,21 +803,39 @@ async function main(): Promise<void> {
   const seenPlaceIds = new Set<string>();
   let totalSaved = 0;
   let skippedCount = 0;
+  let completedCount = 0;
 
-  for (let i = 0; i < searches.length; i++) {
-    const search = searches[i];
-    console.log(`\n[${i + 1}/${searches.length}] Searching: "${search.textQuery}"`);
+  // Parallel processing with sliding window
+  // - Maximum 5 searches running at any moment
+  // - As one finishes, the next starts immediately
+  // - Rate limiter (8 req/sec per key) handles API throttling
+  // - Each search's pagination is sequential (2s delay between pages)
+  const MAX_CONCURRENT_SEARCHES = 5;
+  let activeSearchCount = 0;
+  
+  console.log(`\nParallel processing: max ${MAX_CONCURRENT_SEARCHES} concurrent searches (sliding window)`);
+  console.log(`Rate limit: ${RATE_LIMIT_PER_KEY_PER_SECOND} req/sec × ${activeKeyNames.length} keys = ${RATE_LIMIT_PER_KEY_PER_SECOND * activeKeyNames.length} req/sec max`);
+
+  /**
+   * Process a single search query
+   */
+  async function processSearch(search: SearchQuery, index: number): Promise<void> {
+    const searchNum = index + 1;
+    activeSearchCount++;
     
     try {
       // Check cache if skipCachedSearches is enabled
       if (skipCachedSearches) {
         const cached = await checkSearchCache(search);
         if (cached) {
-          console.log(`  SKIPPED - cached from ${cached.lastRunAt}`);
+          console.log(`[${searchNum}/${searches.length}] SKIPPED (cached): "${search.textQuery}" [${activeSearchCount} active]`);
           skippedCount++;
-          continue;
+          completedCount++;
+          return;
         }
       }
+      
+      console.log(`[${searchNum}/${searches.length}] START: "${search.textQuery}" [${activeSearchCount} active]`);
       
       // Search with tier-appropriate fields (includedType not used - causes missed leads)
       const places = await searchPlaces(search.textQuery, {
@@ -829,23 +847,53 @@ async function main(): Promise<void> {
       await writeSearchCache(search, places.length);
 
       // Deduplicate by place_id (across all searches in this job)
+      // Note: JavaScript is single-threaded, so Set operations are safe
       const newPlaces = places.filter(p => !seenPlaceIds.has(p.id));
       newPlaces.forEach(p => seenPlaceIds.add(p.id));
-
-      console.log(`  Found ${places.length} places, ${newPlaces.length} new (after dedup)`);
 
       // Transform to comprehensive records and write immediately
       if (newPlaces.length > 0) {
         const records = newPlaces.map(place => transformToSearchRecord(place, search, dataTier));
         await writeToDynamoDB(records);
         totalSaved += records.length;
-        console.log(`  Saved ${records.length} businesses to DynamoDB (total: ${totalSaved})`);
       }
+      
+      completedCount++;
+      console.log(`[${searchNum}/${searches.length}] DONE: ${places.length} found, ${newPlaces.length} new (${completedCount}/${searches.length} complete, ${totalSaved} saved)`);
     } catch (error) {
-      console.error(`  Error processing search:`, error);
-      // Continue with next search - don't fail the entire job
+      console.error(`[${searchNum}/${searches.length}] ERROR:`, error);
+      completedCount++;
+    } finally {
+      activeSearchCount--;
     }
   }
+
+  /**
+   * Process searches with sliding window concurrency (never more than MAX_CONCURRENT_SEARCHES at once)
+   */
+  async function processWithSlidingWindow(): Promise<void> {
+    let nextIndex = 0;
+    const activePromises = new Set<Promise<void>>();
+
+    while (nextIndex < searches.length || activePromises.size > 0) {
+      // Start new searches up to the limit (strictly enforced)
+      while (activePromises.size < MAX_CONCURRENT_SEARCHES && nextIndex < searches.length) {
+        const index = nextIndex++;
+        const promise = processSearch(searches[index], index);
+        activePromises.add(promise);
+        
+        // When this promise resolves, remove it from active set
+        promise.finally(() => activePromises.delete(promise));
+      }
+
+      // Wait for at least one to complete before checking again
+      if (activePromises.size > 0) {
+        await Promise.race(activePromises);
+      }
+    }
+  }
+
+  await processWithSlidingWindow();
   
   if (skipCachedSearches && skippedCount > 0) {
     console.log(`\n=== Skipped ${skippedCount} cached searches ===`);
