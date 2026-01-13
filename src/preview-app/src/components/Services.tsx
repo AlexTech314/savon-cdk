@@ -6,7 +6,6 @@ import {
   Flame,
   Settings,
   Bath,
-  ArrowRight,
   FileText,
   Building,
   Calculator,
@@ -103,7 +102,7 @@ export function Services({ servicesSection }: ServicesProps) {
             return (
               <Card
                 key={service.title}
-                className="group cursor-pointer border-transparent hover:border-accent/20 bg-card animate-fade-in"
+                className="group border-transparent hover:border-accent/20 bg-card animate-fade-in"
                 style={{ animationDelay: `${index * 0.1}s` }}
               >
                 <CardHeader>
@@ -118,13 +117,6 @@ export function Services({ servicesSection }: ServicesProps) {
                   <p className="text-muted-foreground text-base">
                     {service.description}
                   </p>
-                  <a
-                    href="#contact"
-                    className="inline-flex items-center gap-1 text-accent font-medium mt-4 group-hover:gap-2 transition-all"
-                  >
-                    Learn More
-                    <ArrowRight className="h-4 w-4" />
-                  </a>
                 </CardContent>
               </Card>
             );
