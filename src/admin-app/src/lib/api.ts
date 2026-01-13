@@ -276,9 +276,19 @@ export const getBusinessFilterOptions = async (): Promise<BusinessFilterOptionsR
   return apiClient<BusinessFilterOptionsResponse>('/businesses/filters', { requiresAuth: true });
 };
 
-export const exportBusinesses = async (columns?: string[]): Promise<string> => {
-  const params = columns?.length ? `?columns=${columns.join(',')}` : '';
-  return apiClient<string>(`/businesses/export${params}`, { requiresAuth: true });
+export const exportBusinesses = async (
+  columns?: string[],
+  filterRules?: PipelineFilterRule[]
+): Promise<string> => {
+  const params = new URLSearchParams();
+  if (columns?.length) {
+    params.set('columns', columns.join(','));
+  }
+  if (filterRules?.length) {
+    params.set('filterRules', encodeURIComponent(JSON.stringify(filterRules)));
+  }
+  const queryString = params.toString();
+  return apiClient<string>(`/businesses/export${queryString ? `?${queryString}` : ''}`, { requiresAuth: true });
 };
 
 // ============================================

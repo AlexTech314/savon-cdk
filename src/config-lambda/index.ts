@@ -547,8 +547,12 @@ async function exportBusinesses(
   // Parse selected columns from query params (comma-separated)
   const selectedColumns = queryParams?.columns?.split(',').filter(c => c.trim()) || [];
   
+  // Parse filter rules from query params (JSON-encoded)
+  const filterRulesParam = queryParams?.filterRules;
+  const filterRules: FilterRule[] = filterRulesParam ? JSON.parse(decodeURIComponent(filterRulesParam)) : [];
+  
   // Scan all items (for small datasets; paginate for larger)
-  const items: Business[] = [];
+  let items: Business[] = [];
   let lastKey: Record<string, unknown> | undefined;
   
   do {
@@ -561,6 +565,27 @@ async function exportBusinesses(
     items.push(...(result.Items as Business[] || []));
     lastKey = result.LastEvaluatedKey;
   } while (lastKey);
+  
+  // Apply filter rules if provided
+  if (filterRules.length > 0) {
+    items = items.filter(item => {
+      return filterRules.every(rule => {
+        const value = (item as Record<string, unknown>)[rule.field];
+        switch (rule.operator) {
+          case 'EXISTS':
+            return value !== undefined && value !== null && value !== '';
+          case 'NOT_EXISTS':
+            return value === undefined || value === null || value === '';
+          case 'EQUALS':
+            return String(value).toLowerCase() === String(rule.value).toLowerCase();
+          case 'NOT_EQUALS':
+            return String(value).toLowerCase() !== String(rule.value).toLowerCase();
+          default:
+            return true;
+        }
+      });
+    });
+  }
   
   if (items.length === 0) {
     return response(200, '', { 'Content-Type': 'text/csv' });
