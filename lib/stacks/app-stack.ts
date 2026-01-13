@@ -58,9 +58,18 @@ export class AppStack extends cdk.Stack {
     // ============================================================
     // Secrets (Pre-existing in AWS Secrets Manager)
     // ============================================================
-    const googleSecret = secretsmanager.Secret.fromSecretCompleteArn(
-      this, 'GoogleApiKey',
+    // Google API Keys - 3 keys for load distribution
+    const googleSecretOriginal = secretsmanager.Secret.fromSecretCompleteArn(
+      this, 'GoogleApiKeyOriginal',
       'arn:aws:secretsmanager:us-east-1:328174020207:secret:GOOGLE_API_KEY-QOFLXH'
+    );
+    const googleSecretOutreach = secretsmanager.Secret.fromSecretCompleteArn(
+      this, 'GoogleApiKeyOutreach',
+      'arn:aws:secretsmanager:us-east-1:328174020207:secret:GOOGLE_API_KEY_SAVON_O-4nyW8Z'
+    );
+    const googleSecretMail = secretsmanager.Secret.fromSecretCompleteArn(
+      this, 'GoogleApiKeyMail',
+      'arn:aws:secretsmanager:us-east-1:328174020207:secret:GOOGLE_API_KEY_SAVON_M-MjTJec'
     );
 
     const claudeSecret = secretsmanager.Secret.fromSecretCompleteArn(
@@ -134,13 +143,16 @@ export class AppStack extends cdk.Stack {
         logRetention: logs.RetentionDays.ONE_WEEK,
       }),
       secrets: {
-        GOOGLE_API_KEY: ecs.Secret.fromSecretsManager(googleSecret),
+        GOOGLE_API_KEY_ORIGINAL: ecs.Secret.fromSecretsManager(googleSecretOriginal),
+        GOOGLE_API_KEY_OUTREACH: ecs.Secret.fromSecretsManager(googleSecretOutreach),
+        GOOGLE_API_KEY_MAIL: ecs.Secret.fromSecretsManager(googleSecretMail),
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         SEARCH_CACHE_TABLE_NAME: searchCacheTable.tableName,
         CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
         AWS_REGION: this.region,
+        GOOGLE_API_KEYS_ACTIVE: 'outreach,mail',  // Default: use new keys only
       },
     });
 
@@ -163,11 +175,14 @@ export class AppStack extends cdk.Stack {
         logRetention: logs.RetentionDays.ONE_WEEK,
       }),
       secrets: {
-        GOOGLE_API_KEY: ecs.Secret.fromSecretsManager(googleSecret),
+        GOOGLE_API_KEY_ORIGINAL: ecs.Secret.fromSecretsManager(googleSecretOriginal),
+        GOOGLE_API_KEY_OUTREACH: ecs.Secret.fromSecretsManager(googleSecretOutreach),
+        GOOGLE_API_KEY_MAIL: ecs.Secret.fromSecretsManager(googleSecretMail),
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         AWS_REGION: this.region,
+        GOOGLE_API_KEYS_ACTIVE: 'outreach,mail',
       },
     });
 
@@ -188,11 +203,14 @@ export class AppStack extends cdk.Stack {
         logRetention: logs.RetentionDays.ONE_WEEK,
       }),
       secrets: {
-        GOOGLE_API_KEY: ecs.Secret.fromSecretsManager(googleSecret),
+        GOOGLE_API_KEY_ORIGINAL: ecs.Secret.fromSecretsManager(googleSecretOriginal),
+        GOOGLE_API_KEY_OUTREACH: ecs.Secret.fromSecretsManager(googleSecretOutreach),
+        GOOGLE_API_KEY_MAIL: ecs.Secret.fromSecretsManager(googleSecretMail),
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         AWS_REGION: this.region,
+        GOOGLE_API_KEYS_ACTIVE: 'outreach,mail',
       },
     });
 
@@ -213,11 +231,14 @@ export class AppStack extends cdk.Stack {
         logRetention: logs.RetentionDays.ONE_WEEK,
       }),
       secrets: {
-        GOOGLE_API_KEY: ecs.Secret.fromSecretsManager(googleSecret),
+        GOOGLE_API_KEY_ORIGINAL: ecs.Secret.fromSecretsManager(googleSecretOriginal),
+        GOOGLE_API_KEY_OUTREACH: ecs.Secret.fromSecretsManager(googleSecretOutreach),
+        GOOGLE_API_KEY_MAIL: ecs.Secret.fromSecretsManager(googleSecretMail),
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         AWS_REGION: this.region,
+        GOOGLE_API_KEYS_ACTIVE: 'outreach,mail',
       },
     });
 
@@ -443,13 +464,18 @@ export class AppStack extends cdk.Stack {
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         CLAUDE_API_KEY: claudeSecret.secretValue.unsafeUnwrap(),
-        GOOGLE_API_KEY: googleSecret.secretValue.unsafeUnwrap(),
+        GOOGLE_API_KEY_ORIGINAL: googleSecretOriginal.secretValue.unsafeUnwrap(),
+        GOOGLE_API_KEY_OUTREACH: googleSecretOutreach.secretValue.unsafeUnwrap(),
+        GOOGLE_API_KEY_MAIL: googleSecretMail.secretValue.unsafeUnwrap(),
+        GOOGLE_API_KEYS_ACTIVE: 'outreach,mail',
       },
     });
 
     businessesTable.grantReadWriteData(configLambda);
     claudeSecret.grantRead(configLambda);
-    googleSecret.grantRead(configLambda);
+    googleSecretOriginal.grantRead(configLambda);
+    googleSecretOutreach.grantRead(configLambda);
+    googleSecretMail.grantRead(configLambda);
 
     const jobsLogGroup = new logs.LogGroup(this, 'JobsLambdaLogs', {
       retention: logs.RetentionDays.ONE_WEEK,

@@ -8,7 +8,34 @@ const docClient = DynamoDBDocumentClient.from(dynamoClient, {
   },
 });
 
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY!;
+// ============ Google API Key Rotation ============
+const GOOGLE_API_KEYS: Record<string, string | undefined> = {
+  original: process.env.GOOGLE_API_KEY_ORIGINAL,
+  outreach: process.env.GOOGLE_API_KEY_OUTREACH,
+  mail: process.env.GOOGLE_API_KEY_MAIL,
+};
+
+const activeKeyNames = (process.env.GOOGLE_API_KEYS_ACTIVE || 'original')
+  .split(',')
+  .map(k => k.trim().toLowerCase())
+  .filter(k => GOOGLE_API_KEYS[k]);
+
+const activeKeys = activeKeyNames.map(k => GOOGLE_API_KEYS[k]!);
+let currentKeyIndex = 0;
+
+function getNextApiKey(): string {
+  if (activeKeys.length === 0) {
+    throw new Error('No active Google API keys configured');
+  }
+  const keyName = activeKeyNames[currentKeyIndex];
+  const key = activeKeys[currentKeyIndex];
+  currentKeyIndex = (currentKeyIndex + 1) % activeKeys.length;
+  console.log(`[Google API] Using key: ${keyName}`);
+  return key;
+}
+
+console.log(`Google API Keys: ${activeKeyNames.length} active (${activeKeyNames.join(', ')})`);
+
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 
 // Rate limiter for Google Places API (600 requests/minute = 10/second)
@@ -121,7 +148,7 @@ async function searchPlaces(query: string, options?: SearchOptions): Promise<Pla
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Goog-Api-Key': GOOGLE_API_KEY,
+        'X-Goog-Api-Key': getNextApiKey(),
         'X-Goog-FieldMask': fieldMask,
       },
       body: JSON.stringify(body),
@@ -163,7 +190,7 @@ async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-Api-Key': getNextApiKey(),
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -189,7 +216,7 @@ function extractAddressComponent(components: PlaceDetails['addressComponents'], 
 }
 
 function buildPhotoUrl(photoName: string): string {
-  return `https://places.googleapis.com/v1/${photoName}/media?key=${GOOGLE_API_KEY}&maxWidthPx=800`;
+  return `https://places.googleapis.com/v1/${photoName}/media?key=${getNextApiKey()}&maxWidthPx=800`;
 }
 
 function formatAuthorDisplayName(fullName: string): string {

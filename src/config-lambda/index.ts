@@ -21,7 +21,36 @@ const docClient = DynamoDBDocumentClient.from(client, {
 });
 const TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+
+// ============ Google API Key Rotation ============
+const GOOGLE_API_KEYS: Record<string, string | undefined> = {
+  original: process.env.GOOGLE_API_KEY_ORIGINAL,
+  outreach: process.env.GOOGLE_API_KEY_OUTREACH,
+  mail: process.env.GOOGLE_API_KEY_MAIL,
+};
+
+const activeKeyNames = (process.env.GOOGLE_API_KEYS_ACTIVE || 'original')
+  .split(',')
+  .map(k => k.trim().toLowerCase())
+  .filter(k => GOOGLE_API_KEYS[k]);
+
+const activeKeys = activeKeyNames.map(k => GOOGLE_API_KEYS[k]!);
+let currentKeyIndex = 0;
+
+function getNextApiKey(): string {
+  if (activeKeys.length === 0) {
+    throw new Error('No active Google API keys configured');
+  }
+  const keyName = activeKeyNames[currentKeyIndex];
+  const key = activeKeys[currentKeyIndex];
+  currentKeyIndex = (currentKeyIndex + 1) % activeKeys.length;
+  console.log(`[Google API] Using key: ${keyName}`);
+  return key;
+}
+
+function hasActiveApiKeys(): boolean {
+  return activeKeys.length > 0;
+}
 
 interface Business {
   place_id: string;
@@ -958,7 +987,7 @@ function formatAuthorDisplayName(fullName: string): string {
 }
 
 function buildPhotoUrl(photoName: string, maxWidth = 800): string {
-  return `https://places.googleapis.com/v1/${photoName}/media?key=${GOOGLE_API_KEY}&maxWidthPx=${maxWidth}`;
+  return `https://places.googleapis.com/v1/${photoName}/media?key=${getNextApiKey()}&maxWidthPx=${maxWidth}`;
 }
 
 /**
@@ -967,7 +996,7 @@ function buildPhotoUrl(photoName: string, maxWidth = 800): string {
  * SMART: Skips if details are already fetched (no double-dipping)
  */
 async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2> {
-  if (!GOOGLE_API_KEY) {
+  if (!hasActiveApiKeys()) {
     return response(500, { error: 'Google API key not configured' });
   }
 
@@ -1019,7 +1048,7 @@ async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-Api-Key': getNextApiKey(),
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1098,7 +1127,7 @@ async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2
  * SMART: Skips if reviews are already fetched (no double-dipping)
  */
 async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2> {
-  if (!GOOGLE_API_KEY) {
+  if (!hasActiveApiKeys()) {
     return response(500, { error: 'Google API key not configured' });
   }
 
@@ -1137,7 +1166,7 @@ async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-Api-Key': getNextApiKey(),
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1207,7 +1236,7 @@ async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2
  * SMART: Skips if photos are already fetched (no double-dipping)
  */
 async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2> {
-  if (!GOOGLE_API_KEY) {
+  if (!hasActiveApiKeys()) {
     return response(500, { error: 'Google API key not configured' });
   }
 
@@ -1246,7 +1275,7 @@ async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2>
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-Api-Key': getNextApiKey(),
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1407,7 +1436,7 @@ async function getPreview(placeIdOrSlug: string): Promise<APIGatewayProxyResultV
  * SMART: Skips if details already fetched
  */
 async function fetchDetailsInternal(placeId: string): Promise<void> {
-  if (!GOOGLE_API_KEY) {
+  if (!hasActiveApiKeys()) {
     throw new Error('Google API key not configured');
   }
 
@@ -1437,7 +1466,7 @@ async function fetchDetailsInternal(placeId: string): Promise<void> {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-Api-Key': getNextApiKey(),
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1501,7 +1530,7 @@ async function fetchDetailsInternal(placeId: string): Promise<void> {
  * SMART: Skips if reviews already fetched
  */
 async function fetchReviewsInternal(placeId: string): Promise<void> {
-  if (!GOOGLE_API_KEY) {
+  if (!hasActiveApiKeys()) {
     throw new Error('Google API key not configured');
   }
 
@@ -1527,7 +1556,7 @@ async function fetchReviewsInternal(placeId: string): Promise<void> {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': GOOGLE_API_KEY,
+      'X-Goog-Api-Key': getNextApiKey(),
       'X-Goog-FieldMask': fieldMask,
     },
   });
