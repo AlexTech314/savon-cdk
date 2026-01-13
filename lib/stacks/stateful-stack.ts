@@ -51,13 +51,6 @@ export class StatefulStack extends cdk.Stack {
       sortKey: { name: 'business_name', type: dynamodb.AttributeType.STRING },
     });
 
-    // GSI for filtering by has_website (string "true" or "false" for GSI compatibility)
-    this.businessesTable.addGlobalSecondaryIndex({
-      indexName: 'by-has-website',
-      partitionKey: { name: 'has_website_str', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'business_name', type: dynamodb.AttributeType.STRING },
-    });
-
     // ============================================================
     // Jobs Table
     // ============================================================
