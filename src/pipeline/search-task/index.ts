@@ -332,8 +332,8 @@ function getFieldMaskForTier(tier: DataTier): string {
  * Cost depends on tier: Pro $32/1000, Enterprise $35/1000, Enterprise+Atmosphere $40/1000
  */
 async function searchPlaces(
-  query: string, 
-  options?: { includedType?: string; maxResults?: number; dataTier?: DataTier }
+  query: string,
+  options?: { maxResults?: number; dataTier?: DataTier }
 ): Promise<PlaceResult[]> {
   const allPlaces: PlaceResult[] = [];
   let pageToken: string | undefined;
@@ -348,7 +348,7 @@ async function searchPlaces(
       textQuery: query, 
       pageSize: 20,
     };
-    if (options?.includedType) body.includedType = options.includedType;
+    // Note: includedType intentionally not used - it causes missed leads
     if (pageToken) body.pageToken = pageToken;
     
     console.log(`    API Request: ${JSON.stringify(body)}`);
@@ -462,7 +462,7 @@ function transformToSearchRecord(
   const record: Record<string, unknown> = {
     place_id: place.id,
     business_name: place.displayName?.text || 'Unknown',
-    business_type: search.includedType || place.primaryType || 'unknown',
+    business_type: place.primaryType || 'unknown',
     primary_type: place.primaryType || null,
     primary_type_display_name: place.primaryTypeDisplayName?.text || null,
     types: place.types ? JSON.stringify(place.types) : null,
@@ -770,7 +770,7 @@ async function main(): Promise<void> {
 
   for (let i = 0; i < searches.length; i++) {
     const search = searches[i];
-    console.log(`\n[${i + 1}/${searches.length}] Searching: "${search.textQuery}" (type: ${search.includedType || 'any'})`);
+    console.log(`\n[${i + 1}/${searches.length}] Searching: "${search.textQuery}"`);
     
     try {
       // Check cache if skipCachedSearches is enabled
@@ -783,9 +783,8 @@ async function main(): Promise<void> {
         }
       }
       
-      // Search with tier-appropriate fields
+      // Search with tier-appropriate fields (includedType not used - causes missed leads)
       const places = await searchPlaces(search.textQuery, {
-        includedType: search.includedType,
         maxResults: maxResultsPerSearch,
         dataTier,
       });
