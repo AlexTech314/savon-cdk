@@ -433,7 +433,7 @@ async function searchPlaces(
  */
 function extractAddressComponent(components: PlaceResult['addressComponents'], type: string): string {
   if (!components) return '';
-  const component = components.find(c => c.types.includes(type));
+  const component = components.find(c => c.types?.includes(type));
   return component?.longText || component?.shortText || '';
 }
 
