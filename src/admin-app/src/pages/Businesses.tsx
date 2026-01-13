@@ -123,7 +123,7 @@ const Businesses: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Businesses</h1>
           <p className="text-muted-foreground">
-            {data?.total ?? 0} total businesses
+            {data?.countIsApproximate ? '~' : ''}{data?.total ?? 0} total businesses
           </p>
         </div>
 

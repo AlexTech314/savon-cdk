@@ -61,6 +61,7 @@ export interface PaginatedResponse<T> {
   page: number;
   limit: number;
   totalPages: number;
+  countIsApproximate?: boolean;
 }
 
 export type PipelineStatus = 'searched' | 'details' | 'reviews' | 'photos' | 'copy' | 'complete' | 'has_website';

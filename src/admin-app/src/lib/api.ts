@@ -155,6 +155,7 @@ export const getBusinesses = async (params: {
   const response = await apiClient<{
     items: BackendBusiness[];
     count: number;
+    countIsApproximate?: boolean;
     page: number;
     limit: number;
   }>(`/businesses?${queryParams.toString()}`);
@@ -173,7 +174,8 @@ export const getBusinesses = async (params: {
   
   return { 
     data, 
-    total: response.count, 
+    total: response.count,
+    countIsApproximate: response.countIsApproximate,
     page: response.page, 
     limit: response.limit, 
     totalPages: Math.ceil(response.count / response.limit) 
