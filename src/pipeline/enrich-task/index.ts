@@ -13,6 +13,7 @@ const GOOGLE_API_KEYS: Record<string, string | undefined> = {
   original: process.env.GOOGLE_API_KEY_ORIGINAL,
   outreach: process.env.GOOGLE_API_KEY_OUTREACH,
   mail: process.env.GOOGLE_API_KEY_MAIL,
+  presley: process.env.GOOGLE_API_KEY_PRESLEY,
 };
 
 const activeKeyNames = (process.env.GOOGLE_API_KEYS_ACTIVE || 'original')
