@@ -343,6 +343,9 @@ async function searchPlaces(
   const fieldMask = getFieldMaskForTier(dataTier);
   const url = 'https://places.googleapis.com/v1/places:searchText';
 
+  let consecutiveEmptyPages = 0;
+  const MAX_EMPTY_PAGES = 3; // Stop after 3 consecutive empty pages with tokens
+
   do {
     const body: Record<string, unknown> = { 
       textQuery: query, 
@@ -373,15 +376,24 @@ async function searchPlaces(
     }
 
     const data = await response.json() as SearchResponse;
+    const placesReturned = data.places?.length || 0;
     
-    if (!data.places || data.places.length === 0) {
-      console.log(`    API Response: No places returned. Raw response keys: ${Object.keys(data).join(', ') || 'empty'}`);
+    if (placesReturned === 0) {
+      consecutiveEmptyPages++;
+      console.log(`    API Response: No places returned (empty page ${consecutiveEmptyPages}/${MAX_EMPTY_PAGES}). Raw response keys: ${Object.keys(data).join(', ') || 'empty'}`);
+      
+      if (consecutiveEmptyPages >= MAX_EMPTY_PAGES) {
+        console.log(`    Stopping: ${MAX_EMPTY_PAGES} consecutive empty pages - likely exhausted results`);
+        break;
+      }
+    } else {
+      consecutiveEmptyPages = 0; // Reset counter on successful page
     }
     
     allPlaces.push(...(data.places || []));
     pageToken = data.nextPageToken;
     
-    console.log(`    Page fetched: ${data.places?.length || 0} results (total: ${allPlaces.length})${pageToken ? ' [has nextPageToken]' : ' [no more pages]'}`);
+    console.log(`    Page fetched: ${placesReturned} results (total: ${allPlaces.length})${pageToken ? ' [has nextPageToken]' : ' [no more pages]'}`);
     
     // Wait for token validity before next page (Google requires ~2s between paginated requests)
     if (pageToken && allPlaces.length < maxResults) {
