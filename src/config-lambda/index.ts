@@ -22,7 +22,7 @@ const docClient = DynamoDBDocumentClient.from(client, {
 const TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-// ============ Google API Key Rotation ============
+// ============ Google API Key Rotation with Per-Key Rate Limiting ============
 const GOOGLE_API_KEYS: Record<string, string | undefined> = {
   original: process.env.GOOGLE_API_KEY_ORIGINAL,
   outreach: process.env.GOOGLE_API_KEY_OUTREACH,
@@ -36,21 +36,83 @@ const activeKeyNames = (process.env.GOOGLE_API_KEYS_ACTIVE || 'original')
   .filter(k => GOOGLE_API_KEYS[k]);
 
 const activeKeys = activeKeyNames.map(k => GOOGLE_API_KEYS[k]!);
-let currentKeyIndex = 0;
 
-function getNextApiKey(): string {
-  if (activeKeys.length === 0) {
+// Per-key rate limiting: 8 requests/second per key
+const RATE_LIMIT_PER_KEY_PER_SECOND = 8;
+
+interface KeyRateLimiter {
+  name: string;
+  key: string;
+  tokens: number;
+  lastRefill: number;
+}
+
+const keyRateLimiters: KeyRateLimiter[] = activeKeyNames.map((name, i) => ({
+  name,
+  key: activeKeys[i],
+  tokens: RATE_LIMIT_PER_KEY_PER_SECOND,
+  lastRefill: Date.now(),
+}));
+
+let lastUsedKeyIndex = -1;
+
+function refillTokens(limiter: KeyRateLimiter): void {
+  const now = Date.now();
+  const elapsed = (now - limiter.lastRefill) / 1000;
+  limiter.tokens = Math.min(
+    RATE_LIMIT_PER_KEY_PER_SECOND,
+    limiter.tokens + elapsed * RATE_LIMIT_PER_KEY_PER_SECOND
+  );
+  limiter.lastRefill = now;
+}
+
+async function getNextApiKey(): Promise<string> {
+  if (keyRateLimiters.length === 0) {
     throw new Error('No active Google API keys configured');
   }
-  const keyName = activeKeyNames[currentKeyIndex];
-  const key = activeKeys[currentKeyIndex];
-  currentKeyIndex = (currentKeyIndex + 1) % activeKeys.length;
-  console.log(`[Google API] Using key: ${keyName}`);
-  return key;
+
+  return new Promise((resolve) => {
+    const tryAcquire = () => {
+      keyRateLimiters.forEach(refillTokens);
+
+      for (let i = 0; i < keyRateLimiters.length; i++) {
+        const index = (lastUsedKeyIndex + 1 + i) % keyRateLimiters.length;
+        const limiter = keyRateLimiters[index];
+        
+        if (limiter.tokens >= 1) {
+          limiter.tokens -= 1;
+          lastUsedKeyIndex = index;
+          console.log(`[Google API] Using key: ${limiter.name} (${limiter.tokens.toFixed(1)} tokens remaining)`);
+          resolve(limiter.key);
+          return;
+        }
+      }
+
+      const soonest = keyRateLimiters.reduce((min, limiter) => {
+        const waitTime = ((1 - limiter.tokens) / RATE_LIMIT_PER_KEY_PER_SECOND) * 1000;
+        return waitTime < min ? waitTime : min;
+      }, Infinity);
+
+      console.log(`[Google API] All keys exhausted, waiting ${Math.ceil(soonest)}ms...`);
+      setTimeout(tryAcquire, Math.max(10, soonest));
+    };
+
+    tryAcquire();
+  });
 }
 
 function hasActiveApiKeys(): boolean {
   return activeKeys.length > 0;
+}
+
+// Sync version for photo URLs (don't need rate limiting, just distribution)
+let photoUrlKeyIndex = 0;
+function getNextApiKeySync(): string {
+  const key = activeKeys[photoUrlKeyIndex % activeKeys.length];
+  const keyName = activeKeyNames[photoUrlKeyIndex % activeKeyNames.length];
+  photoUrlKeyIndex++;
+  console.log(`[Photo URL] Using key: ${keyName}`);
+  return key;
 }
 
 interface Business {
@@ -988,7 +1050,7 @@ function formatAuthorDisplayName(fullName: string): string {
 }
 
 function buildPhotoUrl(photoName: string, maxWidth = 800): string {
-  return `https://places.googleapis.com/v1/${photoName}/media?key=${getNextApiKey()}&maxWidthPx=${maxWidth}`;
+  return `https://places.googleapis.com/v1/${photoName}/media?key=${getNextApiKeySync()}&maxWidthPx=${maxWidth}`;
 }
 
 /**
@@ -1045,11 +1107,14 @@ async function generateDetails(placeId: string): Promise<APIGatewayProxyResultV2
     'primaryType',
   ].join(',');
 
+  // Get next available key (waits if rate limited)
+  const apiKey = await getNextApiKey();
+
   const apiResponse = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': getNextApiKey(),
+      'X-Goog-Api-Key': apiKey,
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1163,11 +1228,14 @@ async function generateReviews(placeId: string): Promise<APIGatewayProxyResultV2
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   const fieldMask = 'reviews,editorialSummary';
 
+  // Get next available key (waits if rate limited)
+  const apiKey = await getNextApiKey();
+
   const apiResponse = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': getNextApiKey(),
+      'X-Goog-Api-Key': apiKey,
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1272,11 +1340,14 @@ async function generatePhotos(placeId: string): Promise<APIGatewayProxyResultV2>
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   const fieldMask = 'photos';
 
+  // Get next available key (waits if rate limited)
+  const apiKey = await getNextApiKey();
+
   const apiResponse = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': getNextApiKey(),
+      'X-Goog-Api-Key': apiKey,
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1463,11 +1534,14 @@ async function fetchDetailsInternal(placeId: string): Promise<void> {
     'websiteUri', 'googleMapsUri', 'location', 'primaryType',
   ].join(',');
 
+  // Get next available key (waits if rate limited)
+  const apiKey = await getNextApiKey();
+
   const apiResponse = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': getNextApiKey(),
+      'X-Goog-Api-Key': apiKey,
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -1553,11 +1627,14 @@ async function fetchReviewsInternal(placeId: string): Promise<void> {
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   const fieldMask = 'reviews,editorialSummary';
 
+  // Get next available key (waits if rate limited)
+  const apiKey = await getNextApiKey();
+
   const apiResponse = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': getNextApiKey(),
+      'X-Goog-Api-Key': apiKey,
       'X-Goog-FieldMask': fieldMask,
     },
   });

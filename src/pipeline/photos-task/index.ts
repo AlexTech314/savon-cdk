@@ -8,7 +8,7 @@ const docClient = DynamoDBDocumentClient.from(dynamoClient, {
   },
 });
 
-// ============ Google API Key Rotation ============
+// ============ Google API Key Rotation with Per-Key Rate Limiting ============
 const GOOGLE_API_KEYS: Record<string, string | undefined> = {
   original: process.env.GOOGLE_API_KEY_ORIGINAL,
   outreach: process.env.GOOGLE_API_KEY_OUTREACH,
@@ -22,54 +22,75 @@ const activeKeyNames = (process.env.GOOGLE_API_KEYS_ACTIVE || 'original')
   .filter(k => GOOGLE_API_KEYS[k]);
 
 const activeKeys = activeKeyNames.map(k => GOOGLE_API_KEYS[k]!);
-let currentKeyIndex = 0;
 
-function getNextApiKey(): string {
-  if (activeKeys.length === 0) {
+// Per-key rate limiting: 8 requests/second per key
+const RATE_LIMIT_PER_KEY_PER_SECOND = 8;
+
+interface KeyRateLimiter {
+  name: string;
+  key: string;
+  tokens: number;
+  lastRefill: number;
+}
+
+const keyRateLimiters: KeyRateLimiter[] = activeKeyNames.map((name, i) => ({
+  name,
+  key: activeKeys[i],
+  tokens: RATE_LIMIT_PER_KEY_PER_SECOND,
+  lastRefill: Date.now(),
+}));
+
+let lastUsedKeyIndex = -1;
+
+function refillTokens(limiter: KeyRateLimiter): void {
+  const now = Date.now();
+  const elapsed = (now - limiter.lastRefill) / 1000;
+  limiter.tokens = Math.min(
+    RATE_LIMIT_PER_KEY_PER_SECOND,
+    limiter.tokens + elapsed * RATE_LIMIT_PER_KEY_PER_SECOND
+  );
+  limiter.lastRefill = now;
+}
+
+async function getNextApiKey(): Promise<string> {
+  if (keyRateLimiters.length === 0) {
     throw new Error('No active Google API keys configured');
   }
-  const keyName = activeKeyNames[currentKeyIndex];
-  const key = activeKeys[currentKeyIndex];
-  currentKeyIndex = (currentKeyIndex + 1) % activeKeys.length;
-  console.log(`[Google API] Using key: ${keyName}`);
-  return key;
+
+  return new Promise((resolve) => {
+    const tryAcquire = () => {
+      keyRateLimiters.forEach(refillTokens);
+
+      for (let i = 0; i < keyRateLimiters.length; i++) {
+        const index = (lastUsedKeyIndex + 1 + i) % keyRateLimiters.length;
+        const limiter = keyRateLimiters[index];
+        
+        if (limiter.tokens >= 1) {
+          limiter.tokens -= 1;
+          lastUsedKeyIndex = index;
+          console.log(`[Google API] Using key: ${limiter.name} (${limiter.tokens.toFixed(1)} tokens remaining)`);
+          resolve(limiter.key);
+          return;
+        }
+      }
+
+      const soonest = keyRateLimiters.reduce((min, limiter) => {
+        const waitTime = ((1 - limiter.tokens) / RATE_LIMIT_PER_KEY_PER_SECOND) * 1000;
+        return waitTime < min ? waitTime : min;
+      }, Infinity);
+
+      console.log(`[Google API] All keys exhausted, waiting ${Math.ceil(soonest)}ms...`);
+      setTimeout(tryAcquire, Math.max(10, soonest));
+    };
+
+    tryAcquire();
+  });
 }
 
 console.log(`Google API Keys: ${activeKeyNames.length} active (${activeKeyNames.join(', ')})`);
+console.log(`Per-key rate limit: ${RATE_LIMIT_PER_KEY_PER_SECOND} req/sec × ${activeKeyNames.length} keys = ${RATE_LIMIT_PER_KEY_PER_SECOND * activeKeyNames.length} req/sec total`);
 
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
-
-// Rate limiter for Google Places API (600 requests/minute = 10/second)
-const RATE_LIMIT_PER_SECOND = 8;
-const rateLimiter = {
-  tokens: RATE_LIMIT_PER_SECOND,
-  lastRefill: Date.now(),
-  
-  async acquire(): Promise<void> {
-    return new Promise((resolve) => {
-      const tryAcquire = () => {
-        const now = Date.now();
-        const elapsed = (now - this.lastRefill) / 1000;
-        
-        this.tokens = Math.min(
-          RATE_LIMIT_PER_SECOND,
-          this.tokens + elapsed * RATE_LIMIT_PER_SECOND
-        );
-        this.lastRefill = now;
-        
-        if (this.tokens >= 1) {
-          this.tokens -= 1;
-          resolve();
-        } else {
-          const waitTime = ((1 - this.tokens) / RATE_LIMIT_PER_SECOND) * 1000;
-          setTimeout(tryAcquire, waitTime);
-        }
-      };
-      
-      tryAcquire();
-    });
-  }
-};
 
 // ============ Types ============
 
@@ -174,18 +195,19 @@ interface PlacePhotos {
  * Get photo references with full metadata using Place Details API ($7/1000 for photos)
  */
 async function getPlacePhotos(placeId: string): Promise<PlacePhotos> {
-  await rateLimiter.acquire();
-  
   const url = `https://places.googleapis.com/v1/places/${placeId}`;
   
   // Request photos with all available metadata
   const fieldMask = 'photos.name,photos.widthPx,photos.heightPx,photos.authorAttributions';
 
+  // Get next available key (waits if rate limited)
+  const apiKey = await getNextApiKey();
+
   const response = await fetch(url, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': getNextApiKey(),
+      'X-Goog-Api-Key': apiKey,
       'X-Goog-FieldMask': fieldMask,
     },
   });
@@ -201,10 +223,15 @@ async function getPlacePhotos(placeId: string): Promise<PlacePhotos> {
 
 /**
  * Build a photo URL from photo reference
- * Uses round-robin key selection to distribute load when photos are viewed
+ * Uses round-robin key selection (sync version) to distribute load when photos are viewed
  */
+let photoUrlKeyIndex = 0;
 function buildPhotoUrl(photoName: string, maxWidth = 800): string {
-  return `https://places.googleapis.com/v1/${photoName}/media?key=${getNextApiKey()}&maxWidthPx=${maxWidth}`;
+  const key = activeKeys[photoUrlKeyIndex % activeKeys.length];
+  const keyName = activeKeyNames[photoUrlKeyIndex % activeKeyNames.length];
+  photoUrlKeyIndex++;
+  console.log(`[Photo URL] Using key: ${keyName}`);
+  return `https://places.googleapis.com/v1/${photoName}/media?key=${key}&maxWidthPx=${maxWidth}`;
 }
 
 /**
