@@ -290,7 +290,8 @@ async function listBusinesses(
     } else if (hasWebsiteFilter !== undefined) {
       items = await queryGSI('by-has-website', 'has_website_str', hasWebsiteFilter);
     } else if (stateFilter) {
-      items = await queryGSI('by-state', 'state', stateFilter.toUpperCase());
+      // State could be stored as "California" or "CA" - query as provided
+      items = await queryGSI('by-state', 'state', stateFilter);
     } else if (businessTypeFilter) {
       // by-type-state GSI has business_type as partition key
       items = await queryGSI('by-type-state', 'business_type', businessTypeFilter.toLowerCase());
@@ -684,7 +685,7 @@ async function getBusinessFilterOptions(): Promise<APIGatewayProxyResultV2> {
         businessTypes.add(item.business_type);
       }
       if (item.state && typeof item.state === 'string') {
-        states.add(item.state.toUpperCase());
+        states.add(item.state); // Keep original case to match GSI
       }
     }
 
