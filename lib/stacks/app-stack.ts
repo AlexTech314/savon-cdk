@@ -9,6 +9,7 @@ import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
@@ -109,7 +110,19 @@ export class AppStack extends cdk.Stack {
     });
 
     // ============================================================
-    // S3 Bucket for Campaign Data (search queries)
+    // ECR Pull-Through Cache for GitHub Container Registry
+    // ============================================================
+    // Pull-through cache rule for GitHub Container Registry
+    // Images from ghcr.io will be cached at: {account}.dkr.ecr.{region}.amazonaws.com/ghcr/...
+    new ecr.CfnPullThroughCacheRule(this, 'GhcrPullThroughCache', {
+      ecrRepositoryPrefix: 'ghcr',
+      upstreamRegistry: 'github-container-registry',
+      upstreamRegistryUrl: 'ghcr.io',
+      credentialArn: 'arn:aws:secretsmanager:us-east-1:328174020207:secret:GHCR_PULL_THROUGH_CACHE-cGFme8',
+    });
+
+    // ============================================================
+    // S3 Bucket for Campaign Data (search queries) and Scraped Data
     // ============================================================
     const campaignDataBucket = new s3.Bucket(this, 'CampaignDataBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -128,6 +141,18 @@ export class AppStack extends cdk.Stack {
           allowedHeaders: ['*'],
           exposedHeaders: ['ETag'],
           maxAge: 3600,
+        },
+      ],
+      lifecycleRules: [
+        {
+          id: 'TransitionScrapedDataToIA',
+          prefix: 'scraped-data/',
+          transitions: [
+            {
+              storageClass: s3.StorageClass.INFREQUENT_ACCESS,
+              transitionAfter: cdk.Duration.days(90),
+            },
+          ],
         },
       ],
     });
@@ -278,6 +303,37 @@ export class AppStack extends cdk.Stack {
     businessesTable.grantReadWriteData(copyTaskDef.taskRole);
 
     // ============================================================
+    // Scrape Task Definition (Web scraping with Puppeteer)
+    // ============================================================
+    const scrapeTaskDef = new ecs.FargateTaskDefinition(this, 'ScrapeTaskDef', {
+      memoryLimitMiB: 4096, // 4GB for Puppeteer/Chromium
+      cpu: 1024,            // 1 vCPU (supports 2-8GB memory)
+    });
+
+    // ECR registry for pull-through cache
+    const ecrRegistry = `${this.account}.dkr.ecr.${this.region}.amazonaws.com`;
+
+    scrapeTaskDef.addContainer('scrape', {
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/scrape-task'), {
+        buildArgs: {
+          ECR_REGISTRY: ecrRegistry,
+        },
+      }),
+      logging: ecs.LogDrivers.awsLogs({ 
+        streamPrefix: 'scrape',
+        logRetention: logs.RetentionDays.ONE_WEEK,
+      }),
+      environment: {
+        BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
+        AWS_REGION: this.region,
+      },
+    });
+
+    businessesTable.grantReadWriteData(scrapeTaskDef.taskRole);
+    campaignDataBucket.grantReadWrite(scrapeTaskDef.taskRole);
+
+    // ============================================================
     // Step Functions State Machine (Task Flag Pattern)
     // ============================================================
     
@@ -367,11 +423,29 @@ export class AppStack extends cdk.Stack {
       resultPath: '$.copyResult',
     });
 
+    const runScrapeTask = new tasks.EcsRunTask(this, 'RunScrapeTask', {
+      integrationPattern: sfn.IntegrationPattern.RUN_JOB,
+      cluster,
+      taskDefinition: scrapeTaskDef,
+      launchTarget: new tasks.EcsFargateLaunchTarget({
+        platformVersion: ecs.FargatePlatformVersion.LATEST,
+      }),
+      containerOverrides: [{
+        containerDefinition: scrapeTaskDef.defaultContainer!,
+        environment: [
+          { name: 'JOB_INPUT', value: sfn.JsonPath.stringAt('States.JsonToString($)') },
+        ],
+      }],
+      assignPublicIp: true,
+      resultPath: '$.scrapeResult',
+    });
+
     // End state
     const pipelineComplete = new sfn.Succeed(this, 'PipelineComplete');
 
     // Build the state machine with task flag checks
     // Each step checks if its flag is set and proceeds accordingly
+    // Order: Search -> Details -> Scrape -> Enrich -> Photos -> Copy
     
     const checkCopy = new sfn.Choice(this, 'CheckRunCopy')
       .when(sfn.Condition.booleanEquals('$.runCopy', true), runCopyTask.next(pipelineComplete))
@@ -385,9 +459,13 @@ export class AppStack extends cdk.Stack {
       .when(sfn.Condition.booleanEquals('$.runEnrich', true), runEnrichTask.next(checkPhotos))
       .otherwise(checkPhotos);
 
-    const checkDetails = new sfn.Choice(this, 'CheckRunDetails')
-      .when(sfn.Condition.booleanEquals('$.runDetails', true), runDetailsTask.next(checkEnrich))
+    const checkScrape = new sfn.Choice(this, 'CheckRunScrape')
+      .when(sfn.Condition.booleanEquals('$.runScrape', true), runScrapeTask.next(checkEnrich))
       .otherwise(checkEnrich);
+
+    const checkDetails = new sfn.Choice(this, 'CheckRunDetails')
+      .when(sfn.Condition.booleanEquals('$.runDetails', true), runDetailsTask.next(checkScrape))
+      .otherwise(checkScrape);
 
     const checkSearch = new sfn.Choice(this, 'CheckRunSearch')
       .when(sfn.Condition.booleanEquals('$.runSearch', true), runSearchTask.next(checkDetails))
