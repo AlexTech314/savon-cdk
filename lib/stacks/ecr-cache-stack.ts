@@ -38,6 +38,31 @@ export class EcrCacheStack extends cdk.Stack {
     });
 
     // ============================================================
+    // Registry Permissions Policy for Pull-Through Cache
+    // ============================================================
+    // Grant any principal in this account permission to use pull-through cache.
+    // This is required for CodeBuild to pull images through the cache.
+    new ecr.CfnRegistryPolicy(this, 'PullThroughCachePolicy', {
+      policyText: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Sid: 'AllowPullThroughCache',
+            Effect: 'Allow',
+            Principal: {
+              AWS: `arn:aws:iam::${this.account}:root`,
+            },
+            Action: [
+              'ecr:CreateRepository',
+              'ecr:BatchImportUpstreamImage',
+            ],
+            Resource: `arn:aws:ecr:${this.region}:${this.account}:repository/ghcr/*`,
+          },
+        ],
+      },
+    });
+
+    // ============================================================
     // Outputs
     // ============================================================
     new cdk.CfnOutput(this, 'EcrRegistry', {
