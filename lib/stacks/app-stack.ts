@@ -9,7 +9,6 @@ import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
-import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
@@ -109,17 +108,6 @@ export class AppStack extends cdk.Stack {
       containerInsightsV2: ecs.ContainerInsights.ENABLED,
     });
 
-    // ============================================================
-    // ECR Pull-Through Cache for GitHub Container Registry
-    // ============================================================
-    // Pull-through cache rule for GitHub Container Registry
-    // Images from ghcr.io will be cached at: {account}.dkr.ecr.{region}.amazonaws.com/ghcr/...
-    new ecr.CfnPullThroughCacheRule(this, 'GhcrPullThroughCache', {
-      ecrRepositoryPrefix: 'ghcr',
-      upstreamRegistry: 'github-container-registry',
-      upstreamRegistryUrl: 'ghcr.io',
-      credentialArn: 'arn:aws:secretsmanager:us-east-1:328174020207:secret:GHCR_PULL_THROUGH_CACHE-cGFme8',
-    });
 
     // ============================================================
     // S3 Bucket for Campaign Data (search queries) and Scraped Data
@@ -310,15 +298,8 @@ export class AppStack extends cdk.Stack {
       cpu: 1024,            // 1 vCPU (supports 2-8GB memory)
     });
 
-    // ECR registry for pull-through cache
-    const ecrRegistry = `${this.account}.dkr.ecr.${this.region}.amazonaws.com`;
-
     scrapeTaskDef.addContainer('scrape', {
-      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/scrape-task'), {
-        buildArgs: {
-          ECR_REGISTRY: ecrRegistry,
-        },
-      }),
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/scrape-task')),
       logging: ecs.LogDrivers.awsLogs({ 
         streamPrefix: 'scrape',
         logRetention: logs.RetentionDays.ONE_WEEK,
