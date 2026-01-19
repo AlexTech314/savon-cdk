@@ -54,16 +54,15 @@ export class EcrCacheStack extends cdk.Stack {
         Version: '2012-10-17',
         Statement: [
           {
-            Sid: 'AllowCdkImagePublishingRole',
+            Sid: 'AllowPullThroughCacheOperations',
             Effect: 'Allow',
             Principal: {
               AWS: imagePublishingRoleArn,
             },
             Action: [
-              'ecr:BatchGetImage',
-              'ecr:GetDownloadUrlForLayer',
-              'ecr:BatchCheckLayerAvailability',
+              // Registry-level operations for pull-through cache
               'ecr:BatchImportUpstreamImage',
+              'ecr:CreateRepository',
             ],
             Resource: `arn:aws:ecr:${this.region}:${this.account}:repository/ghcr/*`,
           },
