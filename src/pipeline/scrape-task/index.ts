@@ -191,10 +191,10 @@ const PATTERNS = {
 
 // ============ Extraction Functions ============
 
-function extractEmails(text: string): string[] {
+function extractEmails(text: string, sourceUrl?: string): string[] {
   const matches = text.match(PATTERNS.email) || [];
   // Filter out common false positives
-  return [...new Set(matches.filter(email => 
+  const emails = [...new Set(matches.filter(email => 
     !email.includes('example.com') &&
     !email.includes('domain.com') &&
     !email.includes('email.com') &&
@@ -202,11 +202,21 @@ function extractEmails(text: string): string[] {
     !email.endsWith('.jpg') &&
     !email.endsWith('.gif')
   ))].slice(0, 10); // Max 10 emails
+  
+  if (emails.length > 0) {
+    console.log(`    [Extract:Emails] Found ${emails.length}: ${emails.slice(0, 3).join(', ')}${emails.length > 3 ? '...' : ''}`);
+  }
+  return emails;
 }
 
 function extractPhones(text: string): string[] {
   const matches = text.match(PATTERNS.phone) || [];
-  return [...new Set(matches.map(p => p.replace(/[^\d+]/g, '')))].slice(0, 5);
+  const phones = [...new Set(matches.map(p => p.replace(/[^\d+]/g, '')))].slice(0, 5);
+  
+  if (phones.length > 0) {
+    console.log(`    [Extract:Phones] Found ${phones.length}: ${phones.slice(0, 3).join(', ')}${phones.length > 3 ? '...' : ''}`);
+  }
+  return phones;
 }
 
 function extractSocialLinks(html: string): ExtractedData['social'] {
@@ -224,6 +234,11 @@ function extractSocialLinks(html: string): ExtractedData['social'] {
   const twitterMatch = html.match(PATTERNS.twitter);
   if (twitterMatch) social.twitter = twitterMatch[0];
   
+  const found = Object.entries(social).filter(([, v]) => v);
+  if (found.length > 0) {
+    console.log(`    [Extract:Social] Found: ${found.map(([k, v]) => `${k}=${v}`).join(', ')}`);
+  }
+  
   return social;
 }
 
@@ -235,6 +250,7 @@ function extractFoundedYear(text: string): { year: number | null; source: string
   for (const match of foundedMatches) {
     const year = parseInt(match[1], 10);
     if (year >= 1800 && year <= currentYear) {
+      console.log(`    [Extract:Founded] Year ${year} from: "${match[0].trim()}"`);
       return { year, source: match[0] };
     }
   }
@@ -245,6 +261,7 @@ function extractFoundedYear(text: string): { year: number | null; source: string
     const years = parseInt(match[1], 10);
     if (years > 0 && years < 200) {
       const foundedYear = currentYear - years;
+      console.log(`    [Extract:Founded] Year ~${foundedYear} (${years} years) from: "${match[0].trim()}"`);
       return { year: foundedYear, source: match[0] };
     }
   }
@@ -255,6 +272,7 @@ function extractFoundedYear(text: string): { year: number | null; source: string
     const years = parseInt(match[1], 10);
     if (years > 0 && years < 200) {
       const foundedYear = currentYear - years;
+      console.log(`    [Extract:Founded] Year ~${foundedYear} (${years} years anniversary) from: "${match[0].trim()}"`);
       return { year: foundedYear, source: match[0] };
     }
   }
@@ -265,6 +283,7 @@ function extractFoundedYear(text: string): { year: number | null; source: string
     if (match[1]) {
       const year = parseInt(match[1], 10);
       if (year >= 1800 && year <= currentYear) {
+        console.log(`    [Extract:Founded] Year ${year} (family-owned) from: "${match[0].trim()}"`);
         return { year, source: match[0] };
       }
     }
@@ -279,6 +298,7 @@ function extractHeadcount(text: string): { estimate: number | null; source: stri
     if (match[1]) {
       const count = parseInt(match[1], 10);
       if (count > 0 && count < 100000) {
+        console.log(`    [Extract:Headcount] ~${count} employees from: "${match[0].trim()}"`);
         return { estimate: count, source: match[0] };
       }
     }
@@ -298,7 +318,11 @@ function extractTeamMembers(text: string, sourceUrl: string): TeamMember[] {
     }
   }
   
-  return members.slice(0, 20); // Max 20 team members
+  const result = members.slice(0, 20); // Max 20 team members
+  if (result.length > 0) {
+    console.log(`    [Extract:Team] Found ${result.length} members: ${result.slice(0, 3).map(m => `${m.name} (${m.title})`).join(', ')}${result.length > 3 ? '...' : ''}`);
+  }
+  return result;
 }
 
 function extractNewHires(text: string, sourceUrl: string): NewHireMention[] {
@@ -312,7 +336,11 @@ function extractNewHires(text: string, sourceUrl: string): NewHireMention[] {
     }
   }
   
-  return mentions.slice(0, 10);
+  const result = mentions.slice(0, 10);
+  if (result.length > 0) {
+    console.log(`    [Extract:NewHires] Found ${result.length}: "${result[0].text.slice(0, 50)}..."`);
+  }
+  return result;
 }
 
 function extractAcquisitionSignals(text: string, sourceUrl: string): AcquisitionSignal[] {
@@ -346,7 +374,11 @@ function extractAcquisitionSignals(text: string, sourceUrl: string): Acquisition
     }
   }
   
-  return signals.slice(0, 10);
+  const result = signals.slice(0, 10);
+  if (result.length > 0) {
+    console.log(`    [Extract:Acquisition] Found ${result.length} signals: ${result.map(s => `${s.signal_type}${s.date_mentioned ? ` (${s.date_mentioned})` : ''}`).join(', ')}`);
+  }
+  return result;
 }
 
 function extractHistorySnippets(text: string, sourceUrl: string): HistorySnippet[] {
@@ -366,12 +398,17 @@ function extractHistorySnippets(text: string, sourceUrl: string): HistorySnippet
     }
   }
   
-  return snippets.slice(0, 5);
+  const result = snippets.slice(0, 5);
+  if (result.length > 0) {
+    console.log(`    [Extract:History] Found ${result.length} snippets: "${result[0].text.slice(0, 60)}..."`);
+  }
+  return result;
 }
 
 function findContactPageUrl(pages: ScrapedPage[]): string | null {
   for (const page of pages) {
     if (PATTERNS.contactPage.test(page.url)) {
+      console.log(`    [Extract:ContactPage] Found: ${page.url}`);
       return page.url;
     }
   }
@@ -782,9 +819,13 @@ function extractAllData(pages: ScrapedPage[]): ExtractedData {
     return 0;
   });
   
+  console.log(`  [Extraction] Processing ${sortedPages.length} pages...`);
+  
   for (const page of sortedPages) {
     const text = page.text_content;
     const html = page.html;
+    
+    console.log(`   [Page] ${page.url} (${text.length} chars)`);
     
     // Extract emails
     extractEmails(text).forEach(e => allEmails.add(e));
@@ -842,12 +883,23 @@ function extractAllData(pages: ScrapedPage[]): ExtractedData {
       : signal.text;
   }
   
+  const contactPageUrl = findContactPageUrl(pages);
+  const dedupedTeamMembers = dedupeTeamMembers(allTeamMembers);
+  
+  // Log extraction summary
+  console.log(`  [Extraction Summary]`);
+  console.log(`    Emails: ${allEmails.size}, Phones: ${allPhones.size}`);
+  console.log(`    Social: ${Object.keys(allSocial).filter(k => allSocial[k as keyof typeof allSocial]).length} profiles`);
+  console.log(`    Team members: ${dedupedTeamMembers.length}, Headcount: ${headcountEstimate || 'unknown'}`);
+  console.log(`    Founded: ${foundedYear || 'unknown'}, Years in business: ${yearsInBusiness || 'unknown'}`);
+  console.log(`    Acquisition signals: ${allAcquisitionSignals.length}, History snippets: ${allHistorySnippets.length}`);
+  
   return {
     emails: [...allEmails],
     phones: [...allPhones],
-    contact_page_url: findContactPageUrl(pages),
+    contact_page_url: contactPageUrl,
     social: allSocial,
-    team_members: dedupeTeamMembers(allTeamMembers),
+    team_members: dedupedTeamMembers,
     headcount_estimate: headcountEstimate,
     headcount_source: headcountSource,
     new_hire_mentions: allNewHires.slice(0, 10),
