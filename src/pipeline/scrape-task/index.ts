@@ -5,6 +5,7 @@ import { gzipSync } from 'zlib';
 import { createRequire } from 'module';
 import { EventEmitter } from 'events';
 import puppeteer, { Browser } from 'puppeteer';
+import { names as firstNamesList } from 'unique-names-generator';
 
 // Increase max listeners to avoid warnings with concurrent requests
 EventEmitter.defaultMaxListeners = 50;
@@ -237,8 +238,9 @@ const PATTERNS = {
   parentCompany: /(?:parent\s+company|subsidiary\s+of)\s+([^,.]+)/gi,
   rebranded: /(?:formerly\s+known\s+as|rebranded\s+(?:from|to))\s+([^,.]+)/gi,
   
-  // Team member patterns (Name - Title or Name, Title)
-  teamMember: /([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})[\s,\-–|]+(?:is\s+(?:the|our)\s+)?(CEO|Owner|President|Founder|Co-Founder|Director|Manager|Chief\s+\w+\s+Officer|Vice\s+President|VP\s+\w+|General\s+Manager|Partner|Principal)/gi,
+  // Team member patterns - CASE SENSITIVE to require proper capitalization
+  // Pattern 1: "Name Title" or "Name - Title" or "Name, Title"
+  teamMemberWithTitle: /([A-Z][a-z]{1,15}(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]{1,20})[\s,\-–|:]+(?:is\s+(?:the|our)\s+)?(CEO|Owner|President|Founder|Co-Founder|Director|Manager|Chief\s+[A-Z][a-z]+\s+Officer|Vice\s+President|VP\s+of\s+[A-Z][a-z]+|General\s+Manager|Partner|Principal|Broker|Agent)/g,
   
   // New hire patterns
   newHire: /(?:welcome|joins?(?:\s+(?:us|our|the)\s+team)?|new\s+(?:team\s+)?member|recently\s+hired)\s+([^.!?]+)/gi,
@@ -489,16 +491,77 @@ function extractHeadcount(text: string): { estimate: number | null; source: stri
   return { estimate: best.count, source: best.source };
 }
 
+// Build a set from unique-names-generator (4940 first names) for O(1) lookup
+// Import is at top of file
+const COMMON_FIRST_NAMES = new Set(firstNamesList.map(n => n.toLowerCase()));
+
+// Words that should NOT appear in names
+const NAME_BLACKLIST = new Set([
+  'home', 'business', 'service', 'services', 'company', 'inc', 'llc', 'corp', 'the', 'and', 'for',
+  'our', 'your', 'with', 'from', 'that', 'this', 'have', 'been', 'was', 'are', 'were', 'being',
+  'colorado', 'california', 'texas', 'florida', 'new', 'york', 'chicago', 'los', 'angeles',
+  'property', 'properties', 'real', 'estate', 'construction', 'plumbing', 'heating', 'cooling',
+  'electric', 'electrical', 'roofing', 'painting', 'cleaning', 'maintenance', 'repair', 'repairs',
+  'give', 'giving', 'providing', 'offers', 'offer', 'plugin', 'website', 'contact', 'about',
+  'concerns', 'concern', 'regarding', 'information', 'details', 'more', 'learn', 'read',
+  'click', 'here', 'page', 'site', 'web', 'online', 'today', 'now', 'call', 'email',
+  'north', 'south', 'east', 'west', 'central', 'metro', 'area', 'region', 'county', 'city',
+]);
+
+/**
+ * Check if a string looks like a real person's name
+ */
+function isValidPersonName(name: string): boolean {
+  const parts = name.trim().split(/\s+/);
+  
+  // Must have 2-4 parts (first + last, or first + middle + last, etc.)
+  if (parts.length < 2 || parts.length > 4) return false;
+  
+  // Check first name against common names list
+  const firstName = parts[0].toLowerCase();
+  if (!COMMON_FIRST_NAMES.has(firstName)) return false;
+  
+  // Check that no part is blacklisted
+  for (const part of parts) {
+    if (NAME_BLACKLIST.has(part.toLowerCase())) return false;
+  }
+  
+  // Each part should be properly capitalized (first letter upper, rest lower)
+  for (const part of parts) {
+    // Allow single initials like "J." or "A"
+    if (part.length <= 2) continue;
+    // Must start with uppercase
+    if (!/^[A-Z]/.test(part)) return false;
+    // Rest should be mostly lowercase (allow O'Brien, McDonald, etc.)
+    if (!/^[A-Z][a-z']+$/.test(part) && !/^[A-Z][a-z]*[A-Z][a-z]+$/.test(part)) return false;
+  }
+  
+  // Last name should be at least 2 characters
+  const lastName = parts[parts.length - 1];
+  if (lastName.length < 2) return false;
+  
+  return true;
+}
+
 function extractTeamMembers(text: string, sourceUrl: string): TeamMember[] {
   const members: TeamMember[] = [];
-  const matches = [...text.matchAll(PATTERNS.teamMember)];
+  
+  // Reset regex
+  PATTERNS.teamMemberWithTitle.lastIndex = 0;
+  const matches = [...text.matchAll(PATTERNS.teamMemberWithTitle)];
   
   for (const match of matches) {
     const name = match[1]?.trim();
     const title = match[2]?.trim();
-    if (name && title && name.length > 3 && name.length < 50) {
-      members.push({ name, title, source_url: sourceUrl });
+    
+    if (!name || !title) continue;
+    
+    // Validate the name looks like a real person
+    if (!isValidPersonName(name)) {
+      continue;
     }
+    
+    members.push({ name, title, source_url: sourceUrl });
   }
   
   const result = members.slice(0, 20); // Max 20 team members
