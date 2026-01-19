@@ -2,6 +2,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { PipelineStack } from '../lib/pipeline-stack';
 import { DnsStack } from '../lib/stacks/dns-stack';
+import { EcrCacheStack } from '../lib/stacks/ecr-cache-stack';
 
 const app = new cdk.App();
 
@@ -24,13 +25,27 @@ const env = {
 new DnsStack(app, 'SavonDns', { env });
 
 // ============================================================
-// Pipeline Stack - Deploy after DNS is configured
+// ECR Cache Stack - Deploy SECOND (before Pipeline)
+// ============================================================
+//
+// Sets up ECR pull-through cache for GitHub Container Registry.
+// Must be deployed before Pipeline so Docker builds can use cached images.
+//
+// Prerequisites:
+// 1. Create secret: ecr-pullthroughcache/ghcr with GHCR credentials
+// 2. Seed the cache: docker pull {account}.dkr.ecr.{region}.amazonaws.com/ghcr/puppeteer/puppeteer:24.0.0
+//
+new EcrCacheStack(app, 'SavonEcrCache', { env });
+
+// ============================================================
+// Pipeline Stack - Deploy LAST after DNS and ECR Cache
 // ============================================================
 //
 // Prerequisites:
 // 1. Create GitHub connection in AWS Console
 // 2. Set githubConnectionArn in cdk.context.json
 // 3. DNS must be configured and certificate issued
+// 4. ECR Cache must be deployed and seeded
 //
 new PipelineStack(app, 'SavonPipeline', { env });
 
