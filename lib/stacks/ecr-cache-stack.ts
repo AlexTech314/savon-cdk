@@ -1,4 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
+import { DefaultStackSynthesizer } from 'aws-cdk-lib';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
@@ -35,6 +36,39 @@ export class EcrCacheStack extends cdk.Stack {
       upstreamRegistry: 'github-container-registry',
       upstreamRegistryUrl: 'ghcr.io',
       credentialArn: ghcrSecret.secretArn,
+    });
+
+    // ============================================================
+    // Registry Policy for Pull-Through Cache Access
+    // ============================================================
+    // The CDK Pipeline's asset publishing assumes the bootstrap image-publishing role.
+    // We use a Registry Policy to grant access to ghcr/* repos.
+    // Reference: https://garbe.io/blog/2024/04/09/bypass-docker-hub-rate-limits-with-ecr-pullthrough-cache/
+    
+    // Use CDK's default bootstrap qualifier to construct the role ARN
+    const qualifier = DefaultStackSynthesizer.DEFAULT_QUALIFIER;
+    const imagePublishingRoleArn = `arn:aws:iam::${this.account}:role/cdk-${qualifier}-image-publishing-role-${this.account}-${this.region}`;
+
+    new ecr.CfnRegistryPolicy(this, 'PullThroughCacheRegistryPolicy', {
+      policyText: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Sid: 'AllowCdkImagePublishingRole',
+            Effect: 'Allow',
+            Principal: {
+              AWS: imagePublishingRoleArn,
+            },
+            Action: [
+              'ecr:BatchGetImage',
+              'ecr:GetDownloadUrlForLayer',
+              'ecr:BatchCheckLayerAvailability',
+              'ecr:BatchImportUpstreamImage',
+            ],
+            Resource: `arn:aws:ecr:${this.region}:${this.account}:repository/ghcr/*`,
+          },
+        ],
+      },
     });
 
     // ============================================================
