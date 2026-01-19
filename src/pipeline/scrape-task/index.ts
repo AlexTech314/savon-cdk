@@ -545,8 +545,9 @@ function isValidPersonName(name: string): boolean {
 
 function extractTeamMembers(text: string, sourceUrl: string): TeamMember[] {
   const members: TeamMember[] = [];
+  const seenNames = new Set<string>();
   
-  // Reset regex
+  // Pattern 1: Names with explicit titles (e.g., "John Smith, Owner")
   PATTERNS.teamMemberWithTitle.lastIndex = 0;
   const matches = [...text.matchAll(PATTERNS.teamMemberWithTitle)];
   
@@ -561,7 +562,40 @@ function extractTeamMembers(text: string, sourceUrl: string): TeamMember[] {
       continue;
     }
     
-    members.push({ name, title, source_url: sourceUrl });
+    const normalizedName = name.toLowerCase();
+    if (!seenNames.has(normalizedName)) {
+      seenNames.add(normalizedName);
+      members.push({ name, title, source_url: sourceUrl });
+    }
+  }
+  
+  // Pattern 2: Standalone names on team/about pages (no title required)
+  // Only apply this on URLs that suggest it's a team/about page
+  const urlLower = sourceUrl.toLowerCase();
+  const isTeamPage = /\b(about|team|staff|people|leadership|our-team|meet|who-we-are|management)\b/.test(urlLower);
+  
+  if (isTeamPage) {
+    // Look for standalone names - proper capitalized First Last format
+    // These often appear as headings or standalone lines on team pages
+    const standaloneNamePattern = /(?:^|\n|>)\s*([A-Z][a-z]{1,15}(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]{1,20})\s*(?:\n|<|$)/g;
+    const standaloneMatches = [...text.matchAll(standaloneNamePattern)];
+    
+    for (const match of standaloneMatches) {
+      const name = match[1]?.trim();
+      if (!name) continue;
+      
+      // Must pass validation
+      if (!isValidPersonName(name)) {
+        continue;
+      }
+      
+      const normalizedName = name.toLowerCase();
+      if (!seenNames.has(normalizedName)) {
+        seenNames.add(normalizedName);
+        // No explicit title, but we know they're on the team page
+        members.push({ name, title: 'Team Member', source_url: sourceUrl });
+      }
+    }
   }
   
   const result = members.slice(0, 20); // Max 20 team members
