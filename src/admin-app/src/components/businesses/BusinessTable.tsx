@@ -84,11 +84,16 @@ const ALL_COLUMNS: ColumnDef[] = [
   
   // Web Scrape
   { key: 'web_scraped', label: 'Scraped', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_scrape_status', label: 'Status', sortable: true, defaultVisible: false, category: 'scrape' },
   { key: 'web_scraped_at', label: 'Scraped At', sortable: true, defaultVisible: false, category: 'scrape' },
   { key: 'web_pages_count', label: 'Pages', sortable: true, defaultVisible: false, category: 'scrape' },
   { key: 'web_scrape_method', label: 'Method', sortable: true, defaultVisible: false, category: 'scrape' },
   { key: 'web_total_bytes', label: 'Size', sortable: true, defaultVisible: false, category: 'scrape' },
   { key: 'web_scrape_duration_ms', label: 'Duration', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_emails', label: 'Emails', sortable: false, defaultVisible: false, category: 'scrape' },
+  { key: 'web_phones', label: 'Phones', sortable: false, defaultVisible: false, category: 'scrape' },
+  { key: 'web_founded_year', label: 'Founded', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_headcount_estimate', label: 'Headcount', sortable: true, defaultVisible: false, category: 'scrape' },
   
   // Meta
   { key: 'friendly_slug', label: 'Slug', sortable: true, defaultVisible: false, category: 'meta' },
@@ -428,6 +433,49 @@ const formatCellValue = (
       if (!value) return <span className="text-muted-foreground">—</span>;
       const ms = value as number;
       return <span>{ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`}</span>;
+    
+    case 'web_scrape_status':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      const statusColors: Record<string, string> = {
+        complete: 'bg-green-500/10 text-green-600',
+        partial: 'bg-yellow-500/10 text-yellow-600',
+        failed: 'bg-red-500/10 text-red-600',
+      };
+      return (
+        <Badge variant="secondary" className={statusColors[value as string] || ''}>
+          {(value as string).charAt(0).toUpperCase() + (value as string).slice(1)}
+        </Badge>
+      );
+    
+    case 'web_emails':
+      if (!value || (Array.isArray(value) && value.length === 0)) {
+        return <span className="text-muted-foreground">—</span>;
+      }
+      const emails = value as string[];
+      return (
+        <span className="text-sm" title={emails.join(', ')}>
+          {emails.length} email{emails.length !== 1 ? 's' : ''}
+        </span>
+      );
+    
+    case 'web_phones':
+      if (!value || (Array.isArray(value) && value.length === 0)) {
+        return <span className="text-muted-foreground">—</span>;
+      }
+      const phones = value as string[];
+      return (
+        <span className="text-sm" title={phones.join(', ')}>
+          {phones.length} phone{phones.length !== 1 ? 's' : ''}
+        </span>
+      );
+    
+    case 'web_founded_year':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return <span>{value as number}</span>;
+    
+    case 'web_headcount_estimate':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return <span>~{value as number}</span>;
     
     default:
       if (value === undefined || value === null || value === '') {

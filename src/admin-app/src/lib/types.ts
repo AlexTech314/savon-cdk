@@ -39,6 +39,25 @@ export interface Business {
   web_scrape_method?: 'fetch' | 'cloudscraper' | 'puppeteer';
   web_total_bytes?: number;
   web_scrape_duration_ms?: number;
+  web_scrape_errors?: number;
+  web_scrape_status?: 'complete' | 'partial' | 'failed';
+  
+  // Extracted scrape data
+  web_emails?: string[];
+  web_phones?: string[];
+  web_contact_page?: string;
+  web_social_linkedin?: string;
+  web_social_facebook?: string;
+  web_social_instagram?: string;
+  web_social_twitter?: string;
+  web_team_members?: string; // JSON stringified
+  web_team_count?: number;
+  web_headcount_estimate?: number;
+  web_headcount_source?: string;
+  web_founded_year?: number;
+  web_years_in_business?: number;
+  web_has_acquisition_signal?: boolean;
+  web_ownership_note?: string;
 }
 
 export interface JobMetrics {
