@@ -93,7 +93,13 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: 'web_emails', label: 'Emails', sortable: false, defaultVisible: false, category: 'scrape' },
   { key: 'web_phones', label: 'Phones', sortable: false, defaultVisible: false, category: 'scrape' },
   { key: 'web_founded_year', label: 'Founded', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_years_in_business', label: 'Years', sortable: true, defaultVisible: false, category: 'scrape' },
   { key: 'web_headcount_estimate', label: 'Headcount', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_team_count', label: 'Team', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_contact_page', label: 'Contact URL', sortable: false, defaultVisible: false, category: 'scrape' },
+  { key: 'web_social_facebook', label: 'Facebook', sortable: false, defaultVisible: false, category: 'scrape' },
+  { key: 'web_social_instagram', label: 'Instagram', sortable: false, defaultVisible: false, category: 'scrape' },
+  { key: 'web_social_linkedin', label: 'LinkedIn', sortable: false, defaultVisible: false, category: 'scrape' },
   
   // Meta
   { key: 'friendly_slug', label: 'Slug', sortable: true, defaultVisible: false, category: 'meta' },
@@ -476,6 +482,32 @@ const formatCellValue = (
     case 'web_headcount_estimate':
       if (!value) return <span className="text-muted-foreground">—</span>;
       return <span>~{value as number}</span>;
+    
+    case 'web_years_in_business':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return <span>{value as number} yrs</span>;
+    
+    case 'web_team_count':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return <span>{value as number}</span>;
+    
+    case 'web_contact_page':
+    case 'web_social_facebook':
+    case 'web_social_instagram':
+    case 'web_social_linkedin':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <a 
+          href={value as string} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-primary hover:underline text-xs truncate max-w-[100px] block"
+          onClick={(e) => e.stopPropagation()}
+          title={value as string}
+        >
+          {new URL(value as string).hostname.replace('www.', '')}
+        </a>
+      );
     
     default:
       if (value === undefined || value === null || value === '') {

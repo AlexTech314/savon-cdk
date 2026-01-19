@@ -413,8 +413,115 @@ const BusinessDetailPage: React.FC = () => {
               </div>
             </div>
 
+            {/* Extracted Data Summary */}
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {/* Founded & History */}
+              {(business.web_founded_year || business.web_years_in_business) && (
+                <div className="p-3 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Business History</p>
+                  <p className="text-sm font-medium">
+                    {business.web_founded_year && `Founded ${business.web_founded_year}`}
+                    {business.web_founded_year && business.web_years_in_business && ' • '}
+                    {business.web_years_in_business && `${business.web_years_in_business} years in business`}
+                  </p>
+                </div>
+              )}
+
+              {/* Contact Info */}
+              {business.web_contact_page && (
+                <div className="p-3 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Contact Page</p>
+                  <a 
+                    href={business.web_contact_page} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline truncate block"
+                  >
+                    {business.web_contact_page}
+                  </a>
+                </div>
+              )}
+
+              {/* Phones from scrape */}
+              {business.web_phones && business.web_phones.length > 0 && (
+                <div className="p-3 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Scraped Phones</p>
+                  <p className="text-sm font-medium">
+                    {business.web_phones.map((p: string | { S: string }) => 
+                      typeof p === 'string' ? p : p.S
+                    ).join(', ')}
+                  </p>
+                </div>
+              )}
+
+              {/* Emails from scrape */}
+              {business.web_emails && business.web_emails.length > 0 && (
+                <div className="p-3 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Scraped Emails</p>
+                  <p className="text-sm font-medium">
+                    {business.web_emails.join(', ')}
+                  </p>
+                </div>
+              )}
+
+              {/* Headcount */}
+              {business.web_headcount_estimate && (
+                <div className="p-3 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Estimated Headcount</p>
+                  <p className="text-sm font-medium">~{business.web_headcount_estimate} employees</p>
+                </div>
+              )}
+
+              {/* Team Count */}
+              {business.web_team_count && business.web_team_count > 0 && (
+                <div className="p-3 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-1">Team Members Found</p>
+                  <p className="text-sm font-medium">{business.web_team_count} people</p>
+                </div>
+              )}
+            </div>
+
+            {/* Social Links */}
+            {(business.web_social_facebook || business.web_social_instagram || 
+              business.web_social_linkedin || business.web_social_twitter) && (
+              <div className="flex flex-wrap gap-2">
+                {business.web_social_facebook && (
+                  <a href={business.web_social_facebook} target="_blank" rel="noopener noreferrer">
+                    <Badge variant="outline" className="gap-1 hover:bg-muted cursor-pointer">
+                      Facebook
+                      <ExternalLink className="h-3 w-3" />
+                    </Badge>
+                  </a>
+                )}
+                {business.web_social_instagram && (
+                  <a href={business.web_social_instagram} target="_blank" rel="noopener noreferrer">
+                    <Badge variant="outline" className="gap-1 hover:bg-muted cursor-pointer">
+                      Instagram
+                      <ExternalLink className="h-3 w-3" />
+                    </Badge>
+                  </a>
+                )}
+                {business.web_social_linkedin && (
+                  <a href={business.web_social_linkedin} target="_blank" rel="noopener noreferrer">
+                    <Badge variant="outline" className="gap-1 hover:bg-muted cursor-pointer">
+                      LinkedIn
+                      <ExternalLink className="h-3 w-3" />
+                    </Badge>
+                  </a>
+                )}
+                {business.web_social_twitter && (
+                  <a href={business.web_social_twitter} target="_blank" rel="noopener noreferrer">
+                    <Badge variant="outline" className="gap-1 hover:bg-muted cursor-pointer">
+                      Twitter/X
+                      <ExternalLink className="h-3 w-3" />
+                    </Badge>
+                  </a>
+                )}
+              </div>
+            )}
+
             {/* Download Buttons */}
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-3 pt-2 border-t border-border">
               {scrapeData?.urls.extracted && (
                 <>
                   <Button
@@ -429,7 +536,7 @@ const BusinessDetailPage: React.FC = () => {
                     ) : (
                       <Eye className="h-4 w-4" />
                     )}
-                    Preview Extracted Data
+                    Preview Full JSON
                   </Button>
                   <Button
                     variant="outline"
