@@ -7,12 +7,14 @@
     "backfill-gsi": "ts-node backfill-gsi-fields.ts",
     "backfill-gsi:dry": "DRY_RUN=true ts-node backfill-gsi-fields.ts",
     "backfill-jobs-pk": "ts-node backfill-jobs-pk.ts",
-    "backfill-jobs-pk:dry": "DRY_RUN=true ts-node backfill-jobs-pk.ts"
+    "backfill-jobs-pk:dry": "DRY_RUN=true ts-node backfill-jobs-pk.ts",
+    "generate-names": "ts-node generate-first-names.ts"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
     "@aws-sdk/client-s3": "^3.0.0",
-    "@aws-sdk/lib-dynamodb": "^3.0.0"
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "unique-names-generator": "^4.7.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

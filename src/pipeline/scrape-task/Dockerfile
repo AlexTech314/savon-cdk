@@ -12,8 +12,13 @@ COPY package*.json tsconfig.json ./
 # Install dependencies (runs as pptruser, not root)
 RUN npm ci
 
-# Copy source and build
+# Copy all source files (including subdirectories)
 COPY *.ts ./
+COPY extractors/ ./extractors/
+COPY scraper/ ./scraper/
+COPY storage/ ./storage/
+COPY utils/ ./utils/
+
 RUN npm run build
 
 # Run the task
