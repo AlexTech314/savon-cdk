@@ -119,7 +119,7 @@ export class AppStack extends cdk.Stack {
       versioned: true, // Enable versioning for safety
       cors: [
         {
-          allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.GET],
+          allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.GET, s3.HttpMethods.HEAD],
           allowedOrigins: [
             'https://admin-alpha.savondesigns.com',
             'https://admin.savondesigns.com',
@@ -127,7 +127,13 @@ export class AppStack extends cdk.Stack {
             'http://localhost:3000', // Local dev alternate
           ],
           allowedHeaders: ['*'],
-          exposedHeaders: ['ETag'],
+          exposedHeaders: [
+            'ETag',
+            'Content-Type',
+            'Content-Encoding',
+            'Content-Length',
+            'Content-Disposition',
+          ],
           maxAge: 3600,
         },
       ],

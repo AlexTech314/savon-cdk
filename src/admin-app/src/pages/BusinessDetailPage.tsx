@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getBusiness, deleteBusiness, generateCopy, getScrapeData } from '@/lib/api';
@@ -32,8 +32,16 @@ import {
   Download,
   FileJson,
   Eye,
+  Users,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
+
+// Team member from web scraping
+interface TeamMember {
+  name: string;
+  title: string;
+  source_url: string;
+}
 
 const BusinessDetailPage: React.FC = () => {
   const { place_id } = useParams<{ place_id: string }>();
@@ -58,6 +66,16 @@ const BusinessDetailPage: React.FC = () => {
   // State for extracted data preview
   const [extractedPreview, setExtractedPreview] = useState<unknown | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+
+  // Parse team members from JSON string
+  const teamMembers = useMemo<TeamMember[]>(() => {
+    if (!business?.web_team_members) return [];
+    try {
+      return JSON.parse(business.web_team_members) as TeamMember[];
+    } catch {
+      return [];
+    }
+  }, [business?.web_team_members]);
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteBusiness(place_id!),
@@ -103,22 +121,23 @@ const BusinessDetailPage: React.FC = () => {
     window.open(`https://alpha.savondesigns.com/preview/${place_id}`, '_blank');
   };
 
-  // Load and decompress extracted data for preview
+  // Load extracted data for preview
+  // Note: S3 serves with Content-Encoding: gzip, so browser auto-decompresses
   const loadExtractedPreview = async () => {
     if (!scrapeData?.urls.extracted?.url) return;
     
     setIsLoadingPreview(true);
     try {
-      const response = await fetch(scrapeData.urls.extracted.url);
-      const blob = await response.blob();
+      const response = await fetch(scrapeData.urls.extracted.url, {
+        mode: 'cors',
+      });
       
-      // Decompress gzip
-      const ds = new DecompressionStream('gzip');
-      const decompressedStream = blob.stream().pipeThrough(ds);
-      const decompressedBlob = await new Response(decompressedStream).blob();
-      const text = await decompressedBlob.text();
-      const data = JSON.parse(text);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
       
+      // Browser auto-decompresses Content-Encoding: gzip
+      const data = await response.json();
       setExtractedPreview(data);
     } catch (error) {
       console.error('Failed to load preview:', error);
@@ -133,18 +152,22 @@ const BusinessDetailPage: React.FC = () => {
   };
 
   // Download handler
+  // Note: S3 serves with Content-Encoding: gzip, so browser auto-decompresses
   const handleDownload = async (url: string, filename: string) => {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        mode: 'cors',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      // Browser auto-decompresses Content-Encoding: gzip
       const blob = await response.blob();
       
-      // Decompress gzip
-      const ds = new DecompressionStream('gzip');
-      const decompressedStream = blob.stream().pipeThrough(ds);
-      const decompressedBlob = await new Response(decompressedStream).blob();
-      
       // Create download link
-      const downloadUrl = URL.createObjectURL(decompressedBlob);
+      const downloadUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
       a.download = filename.replace('.gz', '');
@@ -517,6 +540,38 @@ const BusinessDetailPage: React.FC = () => {
                     </Badge>
                   </a>
                 )}
+              </div>
+            )}
+
+            {/* Team Members */}
+            {teamMembers.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-primary" />
+                  <p className="text-sm font-medium">Team Members ({teamMembers.length})</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {teamMembers.map((member, index) => (
+                    <div 
+                      key={index} 
+                      className="p-3 bg-muted/30 rounded-lg border border-border/50"
+                    >
+                      <p className="font-medium text-sm">{member.name}</p>
+                      <p className="text-xs text-muted-foreground">{member.title}</p>
+                      {member.source_url && (
+                        <a 
+                          href={member.source_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-primary hover:underline mt-1 block truncate"
+                          title={member.source_url}
+                        >
+                          Source
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

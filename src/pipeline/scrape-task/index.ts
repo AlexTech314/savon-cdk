@@ -215,8 +215,19 @@ const PATTERNS = {
   generationBusiness: /(\d+)(?:st|nd|rd|th)\s*generation/gi,
   anniversary: /celebrating\s+(\d+)\s*years?/gi,
   
-  // Headcount patterns
-  headcount: /(?:team\s+of\s+|(\d+)\+?\s*(?:employees?|staff(?:\s+members?)?|team\s+members?|people))/gi,
+  // Headcount patterns - multiple patterns for different phrasings
+  // Pattern 1: "X employees/staff/people" - most common
+  headcountDirect: /(\d{1,5})\+?\s*(?:employees?|staff(?:\s+members?)?|team\s+members?|professionals?|technicians?|workers?|specialists?)/gi,
+  // Pattern 2: "team of X" / "staff of X" / "workforce of X"
+  headcountTeamOf: /(?:team|staff|workforce|crew)\s+of\s+(?:over\s+|more\s+than\s+|approximately\s+|about\s+|around\s+)?(\d{1,5})\+?/gi,
+  // Pattern 3: "X-person team" / "X-member staff"
+  headcountPersonTeam: /(\d{1,5})\s*-?\s*(?:person|member|man|woman)\s+(?:team|staff|crew|operation)/gi,
+  // Pattern 4: "employs X" / "we employ X" / "employing X"
+  headcountEmploys: /(?:we\s+)?employ(?:s|ing)?\s+(?:over\s+|more\s+than\s+|approximately\s+|about\s+|around\s+)?(\d{1,5})\+?/gi,
+  // Pattern 5: "over/more than X employees"
+  headcountOver: /(?:over|more\s+than|approximately|about|around|nearly)\s+(\d{1,5})\+?\s*(?:employees?|staff|team\s+members?|professionals?)/gi,
+  // Pattern 6: Range "X-Y employees" - we'll take the higher number
+  headcountRange: /(\d{1,5})\s*[-–to]+\s*(\d{1,5})\s*(?:employees?|staff|team\s+members?|professionals?)/gi,
   
   // Acquisition/ownership patterns
   acquired: /acquired\s+by\s+([^,.]+)/gi,
@@ -256,9 +267,81 @@ function extractEmails(text: string, sourceUrl?: string): string[] {
   return emails;
 }
 
-function extractPhones(text: string): string[] {
+/**
+ * Normalize a phone number to 10 digits (strip +1 country code)
+ */
+function normalizePhone(phone: string): string {
+  let digits = phone.replace(/\D/g, '');
+  // Remove US country code prefix if present (11 digits starting with 1)
+  if (digits.length === 11 && digits.startsWith('1')) {
+    digits = digits.slice(1);
+  }
+  return digits;
+}
+
+/**
+ * Check if a phone number looks fake/invalid
+ * Filters out: repeating digits, sequential patterns, obvious test numbers
+ */
+function isFakePhone(phone: string): boolean {
+  // Must be 10 digits
+  if (phone.length !== 10) return true;
+  
+  // Check for repeating single digit (3333333333)
+  if (/^(\d)\1{9}$/.test(phone)) return true;
+  
+  // Check for mostly same digit (6666666667 - 9+ of same digit)
+  const digitCounts: Record<string, number> = {};
+  for (const d of phone) {
+    digitCounts[d] = (digitCounts[d] || 0) + 1;
+  }
+  if (Object.values(digitCounts).some(count => count >= 9)) return true;
+  
+  // Check for repeating 3-digit pattern (7037037037)
+  const first3 = phone.slice(0, 3);
+  if (phone === first3 + first3 + first3 + first3.slice(0, 1)) return true;
+  if (phone === first3.repeat(3) + first3.slice(0, 1)) return true;
+  
+  // Check for repeating 2-digit pattern (1212121212)
+  const first2 = phone.slice(0, 2);
+  if (phone === first2.repeat(5)) return true;
+  
+  // Check for sequential ascending (1234567890)
+  if (phone === '1234567890' || phone === '0123456789') return true;
+  
+  // Check for sequential descending (9876543210)
+  if (phone === '9876543210' || phone === '0987654321') return true;
+  
+  // Common test/fake numbers
+  const fakeNumbers = [
+    '0000000000', '1111111111', '2222222222', '5555555555',
+    '1234567890', '0987654321', '1231231234', '9999999999',
+  ];
+  if (fakeNumbers.includes(phone)) return true;
+  
+  // Invalid US area codes (starts with 0 or 1)
+  if (phone.startsWith('0') || phone.startsWith('1')) return true;
+  
+  return false;
+}
+
+/**
+ * Extract phone numbers from text, excluding known phones and fake numbers
+ */
+function extractPhones(text: string, knownPhones: string[] = []): string[] {
   const matches = text.match(PATTERNS.phone) || [];
-  const phones = [...new Set(matches.map(p => p.replace(/[^\d+]/g, '')))].slice(0, 5);
+  
+  // Normalize known phones for comparison
+  const normalizedKnown = new Set(knownPhones.map(normalizePhone));
+  
+  // Normalize, dedupe, and filter
+  const normalized = matches.map(normalizePhone);
+  
+  const phones = [...new Set(normalized)]
+    .filter(p => p.length === 10)
+    .filter(p => !normalizedKnown.has(p)) // Exclude already-known phones
+    .filter(p => !isFakePhone(p))          // Exclude fake/test numbers
+    .slice(0, 5);
   
   if (phones.length > 0) {
     console.log(`    [Extract:Phones] Found ${phones.length}: ${phones.slice(0, 3).join(', ')}${phones.length > 3 ? '...' : ''}`);
@@ -340,17 +423,70 @@ function extractFoundedYear(text: string): { year: number | null; source: string
 }
 
 function extractHeadcount(text: string): { estimate: number | null; source: string | null } {
-  const matches = [...text.matchAll(PATTERNS.headcount)];
-  for (const match of matches) {
-    if (match[1]) {
-      const count = parseInt(match[1], 10);
-      if (count > 0 && count < 100000) {
-        console.log(`    [Extract:Headcount] ~${count} employees from: "${match[0].trim()}"`);
-        return { estimate: count, source: match[0] };
+  // Try each pattern in order of reliability
+  const patterns = [
+    { pattern: PATTERNS.headcountDirect, name: 'direct', group: 1 },
+    { pattern: PATTERNS.headcountTeamOf, name: 'team-of', group: 1 },
+    { pattern: PATTERNS.headcountEmploys, name: 'employs', group: 1 },
+    { pattern: PATTERNS.headcountOver, name: 'over', group: 1 },
+    { pattern: PATTERNS.headcountPersonTeam, name: 'person-team', group: 1 },
+  ];
+  
+  // Collect all matches with their counts
+  const candidates: Array<{ count: number; source: string; pattern: string }> = [];
+  
+  for (const { pattern, name, group } of patterns) {
+    // Reset regex lastIndex for global patterns
+    pattern.lastIndex = 0;
+    const matches = [...text.matchAll(pattern)];
+    for (const match of matches) {
+      if (match[group]) {
+        const count = parseInt(match[group], 10);
+        // Valid range: 2-10000 (filter out "1 employee" which is often false positive)
+        if (count >= 2 && count <= 10000) {
+          candidates.push({ count, source: match[0].trim(), pattern: name });
+        }
       }
     }
   }
-  return { estimate: null, source: null };
+  
+  // Try range pattern separately (take higher number)
+  PATTERNS.headcountRange.lastIndex = 0;
+  const rangeMatches = [...text.matchAll(PATTERNS.headcountRange)];
+  for (const match of rangeMatches) {
+    const low = parseInt(match[1], 10);
+    const high = parseInt(match[2], 10);
+    if (high >= 2 && high <= 10000 && high > low) {
+      // Use the higher number as the estimate
+      candidates.push({ count: high, source: match[0].trim(), pattern: 'range' });
+    }
+  }
+  
+  if (candidates.length === 0) {
+    return { estimate: null, source: null };
+  }
+  
+  // If we have multiple candidates, prefer:
+  // 1. Most common count (if same count appears multiple times)
+  // 2. Higher counts (more specific "50 employees" vs generic numbers)
+  // 3. First match
+  
+  // Count occurrences
+  const countFrequency: Record<number, number> = {};
+  for (const c of candidates) {
+    countFrequency[c.count] = (countFrequency[c.count] || 0) + 1;
+  }
+  
+  // Sort by frequency (desc), then by count (desc)
+  candidates.sort((a, b) => {
+    const freqDiff = (countFrequency[b.count] || 0) - (countFrequency[a.count] || 0);
+    if (freqDiff !== 0) return freqDiff;
+    return b.count - a.count;
+  });
+  
+  const best = candidates[0];
+  console.log(`    [Extract:Headcount] ~${best.count} employees from: "${best.source}" (${best.pattern})`);
+  return { estimate: best.count, source: best.source };
 }
 
 function extractTeamMembers(text: string, sourceUrl: string): TeamMember[] {
@@ -837,7 +973,7 @@ async function scrapeWebsite(
 
 // ============ Data Processing ============
 
-function extractAllData(pages: ScrapedPage[]): ExtractedData {
+function extractAllData(pages: ScrapedPage[], knownPhones: string[] = []): ExtractedData {
   const allEmails = new Set<string>();
   const allPhones = new Set<string>();
   const allSocial: ExtractedData['social'] = {};
@@ -877,8 +1013,8 @@ function extractAllData(pages: ScrapedPage[]): ExtractedData {
     // Extract emails
     extractEmails(text).forEach(e => allEmails.add(e));
     
-    // Extract phones
-    extractPhones(text).forEach(p => allPhones.add(p));
+    // Extract phones (excluding known phones from Google)
+    extractPhones(text, knownPhones).forEach(p => allPhones.add(p));
     
     // Extract social links
     const social = extractSocialLinks(html);
@@ -1342,8 +1478,11 @@ async function main(): Promise<void> {
         const durationMs = Date.now() - startTime;
         const pageBytes = pages.reduce((sum, p) => sum + p.html.length, 0);
         
-        // Extract data
-        const extracted = extractAllData(pages);
+        // Extract data (pass known phone to exclude from scraped phones)
+        const knownPhones: string[] = [];
+        if (business.phone) knownPhones.push(String(business.phone));
+        if (business.international_phone) knownPhones.push(String(business.international_phone));
+        const extracted = extractAllData(pages, knownPhones);
         
         // Create S3 keys
         const timestamp = Date.now();
