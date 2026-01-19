@@ -3,8 +3,8 @@ import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { gzipSync } from 'zlib';
 import puppeteer, { Browser } from 'puppeteer';
-// @ts-expect-error cloudscraper has no types
-import cloudscraper from 'cloudscraper';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const cloudscraper = require('cloudscraper');
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 const docClient = DynamoDBDocumentClient.from(dynamoClient, {
@@ -471,33 +471,27 @@ interface CloudscraperResponse {
  * Fetch a URL using cloudscraper to bypass Cloudflare protection
  */
 async function fetchWithCloudscraper(url: string, timeoutMs: number = 15000): Promise<CloudscraperResponse> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('Request timeout'));
-    }, timeoutMs);
-    
-    cloudscraper.get({
-      uri: url,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
-      resolveWithFullResponse: true,
-    }, (error: Error | null, response: { statusCode: number }, body: string) => {
-      clearTimeout(timeout);
-      
-      if (error) {
-        reject(error);
-        return;
-      }
-      
-      resolve({
-        body,
-        statusCode: response?.statusCode || 200,
-      });
-    });
+  // Create a timeout promise
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('Request timeout')), timeoutMs);
   });
+
+  // Create the cloudscraper request promise
+  const requestPromise = cloudscraper({
+    method: 'GET',
+    uri: url,
+    resolveWithFullResponse: true,
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+    },
+  }).then((response: { statusCode: number; body: string }) => ({
+    body: response.body,
+    statusCode: response.statusCode || 200,
+  }));
+
+  // Race between timeout and request
+  return Promise.race([requestPromise, timeoutPromise]);
 }
 
 async function scrapePage(url: string, browser: Browser | null): Promise<{ page: ScrapedPage; method: 'cloudscraper' | 'puppeteer' } | null> {
