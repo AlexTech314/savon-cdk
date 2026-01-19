@@ -3,6 +3,8 @@ import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { gzipSync } from 'zlib';
 import puppeteer, { Browser } from 'puppeteer';
+// @ts-expect-error cloudscraper has no types
+import cloudscraper from 'cloudscraper';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 const docClient = DynamoDBDocumentClient.from(dynamoClient, {
@@ -110,7 +112,7 @@ interface RawScrapeData {
   place_id: string;
   website_uri: string;
   scraped_at: string;
-  scrape_method: 'fetch' | 'puppeteer';
+  scrape_method: 'fetch' | 'cloudscraper' | 'puppeteer';
   duration_ms: number;
   pages: ScrapedPage[];
 }
@@ -460,43 +462,85 @@ function needsPuppeteer(html: string): boolean {
   return false;
 }
 
-async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
+interface CloudscraperResponse {
+  body: string;
+  statusCode: number;
+}
+
+/**
+ * Fetch a URL using cloudscraper to bypass Cloudflare protection
+ */
+async function fetchWithCloudscraper(url: string, timeoutMs: number = 15000): Promise<CloudscraperResponse> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Request timeout'));
+    }, timeoutMs);
+    
+    cloudscraper.get({
+      uri: url,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
       },
+      resolveWithFullResponse: true,
+    }, (error: Error | null, response: { statusCode: number }, body: string) => {
+      clearTimeout(timeout);
+      
+      if (error) {
+        reject(error);
+        return;
+      }
+      
+      resolve({
+        body,
+        statusCode: response?.statusCode || 200,
+      });
     });
-    return response;
-  } finally {
-    clearTimeout(timeout);
-  }
+  });
 }
 
-async function scrapePage(url: string, browser: Browser | null): Promise<ScrapedPage | null> {
-  const startTime = Date.now();
-  
+async function scrapePage(url: string, browser: Browser | null): Promise<{ page: ScrapedPage; method: 'cloudscraper' | 'puppeteer' } | null> {
   try {
-    // First, try fast HTTP fetch
-    const response = await fetchWithTimeout(url);
-    
-    if (!response.ok) {
-      console.log(`  [${response.status}] ${url}`);
-      return null;
-    }
-    
-    let html = await response.text();
+    // First, try cloudscraper (handles Cloudflare protection)
+    let html: string;
+    let statusCode: number;
     let usedPuppeteer = false;
     
-    // Check if we need Puppeteer
-    if (browser && needsPuppeteer(html)) {
-      console.log(`  [JS] ${url} - needs Puppeteer`);
+    try {
+      const response = await fetchWithCloudscraper(url);
+      html = response.body;
+      statusCode = response.statusCode;
+      
+      if (statusCode >= 400) {
+        console.log(`  [${statusCode}] ${url}`);
+        return null;
+      }
+    } catch (cloudscraperError) {
+      // If cloudscraper fails (e.g., advanced protection), try Puppeteer
+      if (browser) {
+        console.log(`  [Cloudscraper failed] ${url} - trying Puppeteer: ${cloudscraperError}`);
+        try {
+          const page = await browser.newPage();
+          await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+          await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+          html = await page.content();
+          statusCode = 200;
+          await page.close();
+          usedPuppeteer = true;
+        } catch (puppeteerError) {
+          console.log(`  [Puppeteer error] ${url}: ${puppeteerError}`);
+          return null;
+        }
+      } else {
+        console.log(`  [Error] ${url}: ${cloudscraperError}`);
+        return null;
+      }
+    }
+    
+    // Check if we need Puppeteer for JavaScript rendering
+    if (!usedPuppeteer && browser && needsPuppeteer(html)) {
+      console.log(`  [JS] ${url} - needs Puppeteer for rendering`);
       
       try {
         const page = await browser.newPage();
@@ -507,7 +551,7 @@ async function scrapePage(url: string, browser: Browser | null): Promise<Scraped
         usedPuppeteer = true;
       } catch (error) {
         console.log(`  [Puppeteer error] ${url}: ${error}`);
-        // Fall back to original HTML
+        // Fall back to cloudscraper HTML
       }
     }
     
@@ -515,16 +559,20 @@ async function scrapePage(url: string, browser: Browser | null): Promise<Scraped
     const title = extractTitle(html);
     const links = extractLinks(html, url);
     
-    console.log(`  [${usedPuppeteer ? 'Puppeteer' : 'Fetch'}] ${url} - ${textContent.length} chars, ${links.length} links`);
+    const method = usedPuppeteer ? 'puppeteer' : 'cloudscraper';
+    console.log(`  [${method}] ${url} - ${textContent.length} chars, ${links.length} links`);
     
     return {
-      url,
-      title,
-      html,
-      text_content: textContent,
-      links,
-      status_code: response.status,
-      scraped_at: new Date().toISOString(),
+      page: {
+        url,
+        title,
+        html,
+        text_content: textContent,
+        links,
+        status_code: statusCode,
+        scraped_at: new Date().toISOString(),
+      },
+      method,
     };
   } catch (error) {
     console.log(`  [Error] ${url}: ${error}`);
@@ -536,11 +584,12 @@ async function scrapeWebsite(
   websiteUri: string,
   maxPages: number,
   browser: Browser | null
-): Promise<{ pages: ScrapedPage[]; method: 'fetch' | 'puppeteer' }> {
+): Promise<{ pages: ScrapedPage[]; method: 'cloudscraper' | 'puppeteer'; cloudscraperCount: number; puppeteerCount: number }> {
   const visited = new Set<string>();
   const toVisit: string[] = [websiteUri];
   const pages: ScrapedPage[] = [];
-  let usedPuppeteer = false;
+  let cloudscraperCount = 0;
+  let puppeteerCount = 0;
   
   // Priority pages to visit first
   const priorityPaths = [
@@ -578,13 +627,83 @@ async function scrapeWebsite(
     
     // Skip common non-content URLs
     const skipPatterns = [
-      /\.(pdf|doc|docx|xls|xlsx|zip|rar|exe|dmg)$/i,
-      /\.(jpg|jpeg|png|gif|svg|webp|ico|bmp)$/i,
-      /\.(mp3|mp4|wav|avi|mov|wmv)$/i,
-      /\.(css|js|json|xml)$/i,
+      // WordPress junk
+      /\/wp-json\//i,
+      /\/wp-includes\//i,
+      /\/wp-content\/plugins\//i,
+      /\/wp-content\/themes\//i,
       /\/wp-content\/uploads\//i,
-      /\/cdn-cgi\//i,
+      /\/wp-admin\//i,
+      /\/xmlrpc\.php/i,
+      /\/wp-login\.php/i,
       /\/feed\/?$/i,
+      /\/comments\/feed\//i,
+      /\/trackback\//i,
+      
+      // Static assets
+      /\.css(\?.*)?$/i,
+      /\.js(\?.*)?$/i,
+      /\.woff2?(\?.*)?$/i,
+      /\.ttf(\?.*)?$/i,
+      /\.ico(\?.*)?$/i,
+      /\.svg(\?.*)?$/i,
+      /\.png(\?.*)?$/i,
+      /\.jpg(\?.*)?$/i,
+      /\.jpeg(\?.*)?$/i,
+      /\.gif(\?.*)?$/i,
+      /\.webp(\?.*)?$/i,
+      /\.pdf$/i,
+      /\.doc$/i,
+      /\.docx$/i,
+      /\.xls$/i,
+      /\.xlsx$/i,
+      /\.zip$/i,
+      /\.rar$/i,
+      /\.exe$/i,
+      /\.dmg$/i,
+      /\.mp3$/i,
+      /\.mp4$/i,
+      /\.wav$/i,
+      /\.avi$/i,
+      /\.mov$/i,
+      /\.wmv$/i,
+      /\.json$/i,
+      /\.xml$/i,
+      
+      // Wix garbage
+      /\/copy-of-/i,
+      /\/_api\//i,
+      /\/wix-/i,
+      
+      // Squarespace
+      /\/api\//i,
+      /\/static\//i,
+      
+      // Common junk
+      /\/cdn-cgi\//i,           // Cloudflare
+      /\/oembed/i,
+      /\?replytocom=/i,         // WP comment replies
+      /\/attachment\//i,
+      /\/author\//i,            // usually low value
+      /\/tag\//i,               // often duplicate content
+      /\/category\//i,          // same
+      /\/page\/\d+/i,           // pagination
+      /#.*$/i,                  // anchors
+      /\?share=/i,              // social sharing URLs
+      /\?print=/i,              // print versions
+      /\/print\//i,
+      /\/amp\/?$/i,             // AMP versions
+      /\/embed\/?$/i,
+      /\/login/i,
+      /\/register/i,
+      /\/cart/i,
+      /\/checkout/i,
+      /\/my-account/i,
+      /\/search/i,
+      /\?s=/i,                  // search queries
+      /\?p=\d+/i,               // WP preview links
+      /\/calendar\//i,
+      /\/events\//i,            // often noisy
       /\/rss\/?$/i,
     ];
     
@@ -594,15 +713,22 @@ async function scrapeWebsite(
     
     visited.add(normalizedUrl);
     
-    const page = await scrapePage(normalizedUrl, browser);
+    const result = await scrapePage(normalizedUrl, browser);
     
-    if (page) {
-      pages.push(page);
+    if (result) {
+      pages.push(result.page);
       
-      // Check if this page used Puppeteer by looking at content length difference
-      if (page.text_content.length > 500) {
+      // Track which method was used
+      if (result.method === 'puppeteer') {
+        puppeteerCount++;
+      } else {
+        cloudscraperCount++;
+      }
+      
+      // Add links to queue if page has enough content
+      if (result.page.text_content.length > 500) {
         // Add links to queue, prioritizing important pages
-        const sameDomainLinks = page.links.filter(link => isSameDomain(link, websiteUri));
+        const sameDomainLinks = result.page.links.filter(link => isSameDomain(link, websiteUri));
         
         // Sort by priority
         const prioritized = sameDomainLinks.sort((a, b) => {
@@ -625,7 +751,10 @@ async function scrapeWebsite(
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   
-  return { pages, method: usedPuppeteer ? 'puppeteer' : 'fetch' };
+  // Determine primary method used (whichever was used more)
+  const primaryMethod = puppeteerCount > cloudscraperCount ? 'puppeteer' : 'cloudscraper';
+  
+  return { pages, method: primaryMethod, cloudscraperCount, puppeteerCount };
 }
 
 // ============ Data Processing ============
@@ -776,7 +905,7 @@ async function updateBusinessWithScrapeData(
   placeId: string,
   rawS3Key: string,
   extractedS3Key: string,
-  scrapeMethod: 'fetch' | 'puppeteer',
+  scrapeMethod: 'cloudscraper' | 'puppeteer',
   pagesCount: number,
   totalBytes: number,
   durationMs: number,
@@ -962,7 +1091,7 @@ interface ScrapeMetrics {
   processed: number;
   failed: number;
   filtered: number;
-  fetch_count: number;
+  cloudscraper_count: number;
   puppeteer_count: number;
   total_pages: number;
   total_bytes: number;
@@ -997,7 +1126,7 @@ async function updateJobMetrics(
 // ============ Main ============
 
 async function main(): Promise<void> {
-  console.log('=== Scrape Task (Web Scraping with Puppeteer Fallback) ===');
+  console.log('=== Scrape Task (Cloudscraper with Puppeteer Fallback) ===');
   console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
   console.log(`Bucket: ${CAMPAIGN_DATA_BUCKET}`);
   
@@ -1060,7 +1189,7 @@ async function main(): Promise<void> {
   let failed = 0;
   let totalPages = 0;
   let totalBytes = 0;
-  let fetchCount = 0;
+  let cloudscraperCount = 0;
   let puppeteerCount = 0;
   
   for (let i = 0; i < businesses.length; i += concurrency) {
@@ -1072,7 +1201,7 @@ async function main(): Promise<void> {
       try {
         console.log(`\nScraping: ${business.business_name} (${business.website_uri})`);
         
-        const { pages, method } = await scrapeWebsite(business.website_uri!, maxPagesPerSite, browser);
+        const { pages, method, cloudscraperCount: siteCloudscraperCount, puppeteerCount: sitePuppeteerCount } = await scrapeWebsite(business.website_uri!, maxPagesPerSite, browser);
         
         if (pages.length === 0) {
           console.log(`  ✗ No pages scraped for ${business.business_name}`);
@@ -1154,13 +1283,10 @@ async function main(): Promise<void> {
         processed++;
         totalPages += pages.length;
         totalBytes += pageBytes;
-        if (method === 'puppeteer') {
-          puppeteerCount++;
-        } else {
-          fetchCount++;
-        }
+        cloudscraperCount += siteCloudscraperCount;
+        puppeteerCount += sitePuppeteerCount;
         
-        console.log(`  ✓ Scraped ${pages.length} pages, ${extracted.emails.length} emails, ${extracted.team_members.length} team members`);
+        console.log(`  ✓ Scraped ${pages.length} pages (cloudscraper: ${siteCloudscraperCount}, puppeteer: ${sitePuppeteerCount}), ${extracted.emails.length} emails, ${extracted.team_members.length} team members`);
         
       } catch (error) {
         failed++;
@@ -1180,7 +1306,7 @@ async function main(): Promise<void> {
   console.log(`Processed: ${processed}`);
   console.log(`Failed: ${failed}`);
   console.log(`Total pages scraped: ${totalPages}`);
-  console.log(`Fetch: ${fetchCount}, Puppeteer: ${puppeteerCount}`);
+  console.log(`Cloudscraper: ${cloudscraperCount}, Puppeteer: ${puppeteerCount}`);
   console.log(`Total bytes: ${totalBytes}`);
   
   // Update job metrics
@@ -1189,7 +1315,7 @@ async function main(): Promise<void> {
       processed,
       failed,
       filtered: 0, // Scrape task processes all businesses that pass filter rules
-      fetch_count: fetchCount,
+      cloudscraper_count: cloudscraperCount,
       puppeteer_count: puppeteerCount,
       total_pages: totalPages,
       total_bytes: totalBytes,

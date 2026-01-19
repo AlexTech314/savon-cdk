@@ -36,7 +36,7 @@ export interface Business {
   web_raw_s3_key?: string;
   web_extracted_s3_key?: string;
   web_pages_count?: number;
-  web_scrape_method?: 'fetch' | 'puppeteer';
+  web_scrape_method?: 'fetch' | 'cloudscraper' | 'puppeteer';
   web_total_bytes?: number;
   web_scrape_duration_ms?: number;
 }
@@ -56,7 +56,7 @@ export interface JobMetrics {
     processed: number;
     failed: number;
     filtered: number;
-    fetch_count: number;
+    cloudscraper_count: number;
     puppeteer_count: number;
     total_pages: number;
     total_bytes: number;

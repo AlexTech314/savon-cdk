@@ -95,7 +95,7 @@ interface JobMetrics {
     processed: number;
     failed: number;
     filtered: number;
-    fetch_count: number;
+    cloudscraper_count: number;
     puppeteer_count: number;
     total_pages: number;
     total_bytes: number;
