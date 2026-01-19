@@ -1236,9 +1236,12 @@ async function main(): Promise<void> {
   if (jobInputStr) {
     try {
       jobInput = JSON.parse(jobInputStr);
+      console.log('Parsed JOB_INPUT:', JSON.stringify(jobInput, null, 2));
     } catch (e) {
       console.warn('Could not parse JOB_INPUT, using defaults');
     }
+  } else {
+    console.log('No JOB_INPUT provided, using defaults');
   }
   
   const jobId = jobInput.jobId;
@@ -1261,6 +1264,7 @@ async function main(): Promise<void> {
   console.log(`Force re-scrape: ${forceRescrape}`);
   console.log(`Fast mode (no Puppeteer): ${fastMode}`);
   console.log(`Filter rules: ${filterRules.length > 0 ? JSON.stringify(filterRules) : 'none'}`);
+  console.log(`Place IDs filter: ${placeIds ? `${placeIds.length} IDs: ${placeIds.slice(0, 5).join(', ')}${placeIds.length > 5 ? '...' : ''}` : 'none (scanning all)'}`);
   
   // Get businesses to scrape
   const businesses = await getBusinessesToScrape(placeIds, filterRules, skipIfDone, forceRescrape);
