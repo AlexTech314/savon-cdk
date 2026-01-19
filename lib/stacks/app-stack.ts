@@ -303,9 +303,12 @@ export class AppStack extends cdk.Stack {
     // ============================================================
     // Scrape Task Definition (Web scraping with Puppeteer)
     // ============================================================
+    const scrapeMemoryMiB = 4096; // 4GB for Puppeteer/Chromium
+    const scrapeCpuUnits = 1024;  // 1 vCPU
+    
     const scrapeTaskDef = new ecs.FargateTaskDefinition(this, 'ScrapeTaskDef', {
-      memoryLimitMiB: 4096, // 4GB for Puppeteer/Chromium
-      cpu: 1024,            // 1 vCPU (supports 2-8GB memory)
+      memoryLimitMiB: scrapeMemoryMiB,
+      cpu: scrapeCpuUnits,
     });
 
     // ECR registry for pull-through cache (must deploy SavonEcrCache first)
@@ -326,6 +329,9 @@ export class AppStack extends cdk.Stack {
         CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
         JOBS_TABLE_NAME: jobsTable.tableName,
         AWS_REGION: this.region,
+        // Pass task size for dynamic concurrency calculation
+        TASK_MEMORY_MIB: String(scrapeMemoryMiB),
+        TASK_CPU_UNITS: String(scrapeCpuUnits),
       },
     });
 

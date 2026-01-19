@@ -25,6 +25,44 @@ const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const CAMPAIGN_DATA_BUCKET = process.env.CAMPAIGN_DATA_BUCKET!;
 const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME;
 
+// Task resource info for dynamic concurrency calculation
+const TASK_MEMORY_MIB = parseInt(process.env.TASK_MEMORY_MIB || '4096', 10);
+const TASK_CPU_UNITS = parseInt(process.env.TASK_CPU_UNITS || '1024', 10);
+
+/**
+ * Calculate optimal concurrency based on task resources.
+ * 
+ * Memory considerations:
+ * - Puppeteer/Chromium: ~300MB per browser page
+ * - Cloudscraper (no Puppeteer): ~50MB per concurrent request
+ * - Base overhead: ~500MB for Node.js + browser process
+ * 
+ * CPU considerations:
+ * - Puppeteer is CPU-intensive during page load
+ * - Cloudscraper is mostly I/O bound
+ * 
+ * @param fastMode If true, Puppeteer is disabled so we can be more aggressive
+ */
+function calculateOptimalConcurrency(fastMode: boolean): number {
+  const baseOverheadMB = 500;
+  const availableMemoryMB = TASK_MEMORY_MIB - baseOverheadMB;
+  
+  if (fastMode) {
+    // Cloudscraper-only mode: ~50MB per concurrent request, mostly I/O bound
+    // Can be very aggressive with concurrency
+    const memoryBasedConcurrency = Math.floor(availableMemoryMB / 50);
+    // Limit by CPU: ~20 concurrent requests per vCPU for I/O bound work
+    const cpuBasedConcurrency = Math.floor((TASK_CPU_UNITS / 1024) * 30);
+    return Math.min(memoryBasedConcurrency, cpuBasedConcurrency, 50); // Cap at 50
+  } else {
+    // Puppeteer mode: ~300MB per page, CPU intensive
+    const memoryBasedConcurrency = Math.floor(availableMemoryMB / 300);
+    // Limit by CPU: ~3-5 browser pages per vCPU
+    const cpuBasedConcurrency = Math.floor((TASK_CPU_UNITS / 1024) * 4);
+    return Math.max(Math.min(memoryBasedConcurrency, cpuBasedConcurrency), 3); // Min 3
+  }
+}
+
 // ============ Types ============
 
 interface FilterRule {
@@ -42,6 +80,8 @@ interface JobInput {
   skipIfDone?: boolean;
   forceRescrape?: boolean;
   placeIds?: string[];
+  // Speed optimization options
+  fastMode?: boolean; // Skip Puppeteer fallback entirely for max speed
 }
 
 interface Business {
@@ -514,7 +554,7 @@ interface CloudscraperResponse {
 /**
  * Fetch a URL using cloudscraper to bypass Cloudflare protection
  */
-async function fetchWithCloudscraper(url: string, timeoutMs: number = 15000): Promise<CloudscraperResponse> {
+async function fetchWithCloudscraper(url: string, timeoutMs: number = 10000): Promise<CloudscraperResponse> {
   // Create a timeout promise
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => reject(new Error('Request timeout')), timeoutMs);
@@ -561,7 +601,7 @@ async function scrapePage(url: string, browser: Browser | null): Promise<{ page:
         try {
           const page = await browser.newPage();
           await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-          await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
           html = await page.content();
           statusCode = 200;
           await page.close();
@@ -785,8 +825,8 @@ async function scrapeWebsite(
       }
     }
     
-    // Small delay between requests to be polite
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Minimal delay between requests (50ms instead of 200ms for speed)
+    await new Promise(resolve => setTimeout(resolve, 50));
   }
   
   // Determine primary method used (whichever was used more)
@@ -1202,17 +1242,24 @@ async function main(): Promise<void> {
   }
   
   const jobId = jobInput.jobId;
-  const maxPagesPerSite = jobInput.maxPagesPerSite || 20;
-  const concurrency = jobInput.concurrency || 3;
+  const maxPagesPerSite = jobInput.maxPagesPerSite || 10; // Reduced from 20 - most value is in first pages
   const skipIfDone = jobInput.skipIfDone !== false;
   const forceRescrape = jobInput.forceRescrape || false;
   const filterRules = jobInput.filterRules || [];
   const placeIds = jobInput.placeIds;
+  const fastMode = jobInput.fastMode || false; // Skip Puppeteer for max speed
   
+  // Calculate optimal concurrency based on task resources
+  const calculatedConcurrency = calculateOptimalConcurrency(fastMode);
+  const concurrency = jobInput.concurrency || calculatedConcurrency;
+  
+  console.log(`Task resources: ${TASK_MEMORY_MIB}MB memory, ${TASK_CPU_UNITS} CPU units`);
+  console.log(`Calculated optimal concurrency: ${calculatedConcurrency}`);
+  console.log(`Using concurrency: ${concurrency}`);
   console.log(`Max pages per site: ${maxPagesPerSite}`);
-  console.log(`Concurrency: ${concurrency}`);
   console.log(`Skip if already scraped: ${skipIfDone}`);
   console.log(`Force re-scrape: ${forceRescrape}`);
+  console.log(`Fast mode (no Puppeteer): ${fastMode}`);
   console.log(`Filter rules: ${filterRules.length > 0 ? JSON.stringify(filterRules) : 'none'}`);
   
   // Get businesses to scrape
@@ -1224,23 +1271,27 @@ async function main(): Promise<void> {
     return;
   }
   
-  // Launch Puppeteer browser (shared across all scrapes)
-  console.log('Launching Puppeteer browser...');
+  // Launch Puppeteer browser (shared across all scrapes) - skip in fast mode
   let browser: Browser | null = null;
   
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-      ],
-    });
-    console.log('Browser launched successfully');
-  } catch (error) {
-    console.warn('Failed to launch Puppeteer, will use fetch only:', error);
+  if (!fastMode) {
+    console.log('Launching Puppeteer browser...');
+    try {
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+        ],
+      });
+      console.log('Browser launched successfully');
+    } catch (error) {
+      console.warn('Failed to launch Puppeteer, will use cloudscraper only:', error);
+    }
+  } else {
+    console.log('Fast mode enabled - skipping Puppeteer for maximum speed');
   }
   
   // Process businesses
