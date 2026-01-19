@@ -3,7 +3,11 @@ import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { gzipSync } from 'zlib';
 import { createRequire } from 'module';
+import { EventEmitter } from 'events';
 import puppeteer, { Browser } from 'puppeteer';
+
+// Increase max listeners to avoid warnings with concurrent requests
+EventEmitter.defaultMaxListeners = 50;
 
 // cloudscraper uses CommonJS, need createRequire for ES modules
 const require = createRequire(import.meta.url);
