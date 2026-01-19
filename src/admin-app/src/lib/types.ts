@@ -41,23 +41,73 @@ export interface Business {
   web_scrape_duration_ms?: number;
 }
 
+export interface JobMetrics {
+  search?: {
+    queries_run: number;
+    businesses_found: number;
+    cached_skipped?: number;
+  };
+  details?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+  };
+  scrape?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    fetch_count: number;
+    puppeteer_count: number;
+    total_pages: number;
+    total_bytes: number;
+  };
+  enrich?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    with_reviews: number;
+    without_reviews: number;
+  };
+  photos?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    photos_downloaded: number;
+  };
+  copy?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    skipped_no_reviews: number;
+  };
+}
+
 export interface Job {
   job_id: string;
-  job_type: 'places';
+  job_type: 'places' | 'pipeline';
+  job_name?: string;
   status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'ABORTED';
-  campaign_id: string;
+  campaign_id?: string;
   campaign_name?: string;
   created_at: string;
   started_at?: string;
   completed_at?: string;
   input?: {
-    campaignId: string;
-    jobType: 'places';
-    searches: { textQuery: string; includedType?: string }[];
-    maxResultsPerSearch: number;
-    onlyWithoutWebsite: boolean;
+    campaignId?: string;
+    jobType: 'places' | 'pipeline';
+    searches?: { textQuery: string; includedType?: string }[];
+    maxResultsPerSearch?: number;
+    onlyWithoutWebsite?: boolean;
+    runDetails?: boolean;
+    runEnrich?: boolean;
+    runPhotos?: boolean;
+    runCopy?: boolean;
+    runScrape?: boolean;
+    filterRules?: Array<{ field: string; operator: string; value?: string }>;
+    placeIds?: string[];
   };
   error?: string;
+  metrics?: JobMetrics;
 }
 
 export interface User {

@@ -169,6 +169,7 @@ export class AppStack extends cdk.Stack {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         SEARCH_CACHE_TABLE_NAME: searchCacheTable.tableName,
         CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
+        JOBS_TABLE_NAME: jobsTable.tableName,
         AWS_REGION: this.region,
         GOOGLE_API_KEYS_ACTIVE: 'outreach,mail,presley',
       },
@@ -177,6 +178,7 @@ export class AppStack extends cdk.Stack {
     businessesTable.grantReadWriteData(searchTaskDef.taskRole);
     searchCacheTable.grantReadWriteData(searchTaskDef.taskRole);
     campaignDataBucket.grantRead(searchTaskDef.taskRole);
+    jobsTable.grantWriteData(searchTaskDef.taskRole);
 
     // ============================================================
     // Details Task Definition (Google Places Details - Enterprise tier)
@@ -200,12 +202,14 @@ export class AppStack extends cdk.Stack {
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        JOBS_TABLE_NAME: jobsTable.tableName,
         AWS_REGION: this.region,
         GOOGLE_API_KEYS_ACTIVE: 'outreach,mail,presley',
       },
     });
 
     businessesTable.grantReadWriteData(detailsTaskDef.taskRole);
+    jobsTable.grantWriteData(detailsTaskDef.taskRole);
 
     // ============================================================
     // Enrich Task Definition (Google Places Reviews - Enterprise+Atmosphere tier)
@@ -229,12 +233,14 @@ export class AppStack extends cdk.Stack {
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        JOBS_TABLE_NAME: jobsTable.tableName,
         AWS_REGION: this.region,
         GOOGLE_API_KEYS_ACTIVE: 'outreach,mail,presley',
       },
     });
 
     businessesTable.grantReadWriteData(enrichTaskDef.taskRole);
+    jobsTable.grantWriteData(enrichTaskDef.taskRole);
 
     // ============================================================
     // Photos Task Definition (Google Places Photos)
@@ -258,12 +264,14 @@ export class AppStack extends cdk.Stack {
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        JOBS_TABLE_NAME: jobsTable.tableName,
         AWS_REGION: this.region,
         GOOGLE_API_KEYS_ACTIVE: 'outreach,mail,presley',
       },
     });
 
     businessesTable.grantReadWriteData(photosTaskDef.taskRole);
+    jobsTable.grantWriteData(photosTaskDef.taskRole);
 
     // ============================================================
     // Copy Task Definition (LLM copy generation)
@@ -284,11 +292,13 @@ export class AppStack extends cdk.Stack {
       },
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        JOBS_TABLE_NAME: jobsTable.tableName,
         AWS_REGION: this.region,
       },
     });
 
     businessesTable.grantReadWriteData(copyTaskDef.taskRole);
+    jobsTable.grantWriteData(copyTaskDef.taskRole);
 
     // ============================================================
     // Scrape Task Definition (Web scraping with Puppeteer)
@@ -314,12 +324,14 @@ export class AppStack extends cdk.Stack {
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
         CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
+        JOBS_TABLE_NAME: jobsTable.tableName,
         AWS_REGION: this.region,
       },
     });
 
     businessesTable.grantReadWriteData(scrapeTaskDef.taskRole);
     campaignDataBucket.grantReadWrite(scrapeTaskDef.taskRole);
+    jobsTable.grantWriteData(scrapeTaskDef.taskRole);
 
     // ============================================================
     // Step Functions State Machine (Task Flag Pattern)

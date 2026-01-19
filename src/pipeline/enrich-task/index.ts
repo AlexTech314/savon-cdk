@@ -91,6 +91,7 @@ console.log(`Google API Keys: ${activeKeyNames.length} active (${activeKeyNames.
 console.log(`Per-key rate limit: ${RATE_LIMIT_PER_KEY_PER_SECOND} req/sec × ${activeKeyNames.length} keys = ${RATE_LIMIT_PER_KEY_PER_SECOND * activeKeyNames.length} req/sec total`);
 
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
+const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME;
 
 // ============ Types ============
 
@@ -101,6 +102,9 @@ interface FilterRule {
 }
 
 interface JobInput {
+  // Job ID for metrics tracking
+  jobId?: string;
+  
   // Task flags
   runSearch?: boolean;
   runDetails?: boolean;
@@ -452,6 +456,34 @@ async function updateBusinessWithEnrichment(placeId: string, enrichment: PlaceEn
   }));
 }
 
+// ============ Job Metrics ============
+
+/**
+ * Update job metrics in DynamoDB
+ */
+async function updateJobMetrics(
+  jobId: string, 
+  metrics: { processed: number; failed: number; filtered: number; with_reviews: number; without_reviews: number }
+): Promise<void> {
+  if (!JOBS_TABLE_NAME) {
+    console.warn('JOBS_TABLE_NAME not set, skipping metrics update');
+    return;
+  }
+  
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: JOBS_TABLE_NAME,
+      Key: { job_id: jobId },
+      UpdateExpression: 'SET metrics.#step = :metrics',
+      ExpressionAttributeNames: { '#step': 'enrich' },
+      ExpressionAttributeValues: { ':metrics': metrics },
+    }));
+    console.log(`Updated job metrics for ${jobId}`);
+  } catch (error) {
+    console.error('Failed to update job metrics:', error);
+  }
+}
+
 // ============ Main ============
 
 async function main(): Promise<void> {
@@ -470,6 +502,7 @@ async function main(): Promise<void> {
     }
   }
 
+  const jobId = jobInput.jobId;
   const placeIds = jobInput.placeIds;
   const concurrency = jobInput.concurrency || 5;
   const skipIfDone = jobInput.skipIfDone !== false; // Default true
@@ -534,6 +567,18 @@ async function main(): Promise<void> {
   console.log(`Failed: ${failed}`);
   console.log(`With reviews: ${withReviews}`);
   console.log(`Without reviews: ${withoutReviews}`);
+  
+  // Update job metrics
+  if (jobId) {
+    await updateJobMetrics(jobId, {
+      processed,
+      failed,
+      filtered: 0, // Enrich task processes all businesses that pass filter rules
+      with_reviews: withReviews,
+      without_reviews: withoutReviews,
+    });
+  }
+  
   console.log('Next step: Run copy-task to generate LLM copy');
 }
 

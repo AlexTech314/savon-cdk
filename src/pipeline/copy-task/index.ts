@@ -11,6 +11,7 @@ const docClient = DynamoDBDocumentClient.from(dynamoClient, {
 
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY!;
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
+const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME;
 
 const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY });
 
@@ -376,6 +377,9 @@ interface FilterRule {
 }
 
 interface JobInput {
+  // Job ID for metrics tracking
+  jobId?: string;
+
   // Task flags
   runSearch?: boolean;
   runDetails?: boolean;
@@ -441,6 +445,34 @@ function buildFilterFromRules(
   };
 }
 
+// ============ Job Metrics ============
+
+/**
+ * Update job metrics in DynamoDB
+ */
+async function updateJobMetrics(
+  jobId: string, 
+  metrics: { processed: number; failed: number; filtered: number; skipped_no_reviews: number }
+): Promise<void> {
+  if (!JOBS_TABLE_NAME) {
+    console.warn('JOBS_TABLE_NAME not set, skipping metrics update');
+    return;
+  }
+  
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: JOBS_TABLE_NAME,
+      Key: { job_id: jobId },
+      UpdateExpression: 'SET metrics.#step = :metrics',
+      ExpressionAttributeNames: { '#step': 'copy' },
+      ExpressionAttributeValues: { ':metrics': metrics },
+    }));
+    console.log(`Updated job metrics for ${jobId}`);
+  } catch (error) {
+    console.error('Failed to update job metrics:', error);
+  }
+}
+
 async function main(): Promise<void> {
   console.log('=== Copy Task (LLM Copy Generation) ===');
   console.log(`Table: ${BUSINESSES_TABLE_NAME}`);
@@ -457,6 +489,7 @@ async function main(): Promise<void> {
     }
   }
 
+  const jobId = jobInput.jobId;
   const placeIds = jobInput.placeIds;
   const concurrency = jobInput.concurrency || 5;
   const skipIfDone = jobInput.skipIfDone !== false; // Default true
@@ -537,6 +570,16 @@ async function main(): Promise<void> {
   console.log(`  With reviews: ${processedWithReviews}`);
   console.log(`  Without reviews: ${processedWithoutReviews}`);
   console.log(`Failed: ${failed}`);
+  
+  // Update job metrics
+  if (jobId) {
+    await updateJobMetrics(jobId, {
+      processed,
+      failed,
+      filtered: 0, // Copy task processes all businesses that pass filter rules
+      skipped_no_reviews: skippedNoReviews,
+    });
+  }
 }
 
 main().catch(error => {

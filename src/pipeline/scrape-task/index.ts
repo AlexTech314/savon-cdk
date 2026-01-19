@@ -14,6 +14,7 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
 
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const CAMPAIGN_DATA_BUCKET = process.env.CAMPAIGN_DATA_BUCKET!;
+const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME;
 
 // ============ Types ============
 
@@ -24,6 +25,7 @@ interface FilterRule {
 }
 
 interface JobInput {
+  jobId?: string;
   runScrape?: boolean;
   maxPagesPerSite?: number;
   concurrency?: number;
@@ -954,6 +956,44 @@ async function getBusinessesToScrape(
   return businesses;
 }
 
+// ============ Job Metrics ============
+
+interface ScrapeMetrics {
+  processed: number;
+  failed: number;
+  filtered: number;
+  fetch_count: number;
+  puppeteer_count: number;
+  total_pages: number;
+  total_bytes: number;
+}
+
+/**
+ * Update job metrics in DynamoDB
+ */
+async function updateJobMetrics(
+  jobId: string, 
+  metrics: ScrapeMetrics
+): Promise<void> {
+  if (!JOBS_TABLE_NAME) {
+    console.warn('JOBS_TABLE_NAME not set, skipping metrics update');
+    return;
+  }
+  
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: JOBS_TABLE_NAME,
+      Key: { job_id: jobId },
+      UpdateExpression: 'SET metrics.#step = :metrics',
+      ExpressionAttributeNames: { '#step': 'scrape' },
+      ExpressionAttributeValues: { ':metrics': metrics },
+    }));
+    console.log(`Updated job metrics for ${jobId}`);
+  } catch (error) {
+    console.error('Failed to update job metrics:', error);
+  }
+}
+
 // ============ Main ============
 
 async function main(): Promise<void> {
@@ -973,6 +1013,7 @@ async function main(): Promise<void> {
     }
   }
   
+  const jobId = jobInput.jobId;
   const maxPagesPerSite = jobInput.maxPagesPerSite || 20;
   const concurrency = jobInput.concurrency || 3;
   const skipIfDone = jobInput.skipIfDone !== false;
@@ -1018,6 +1059,9 @@ async function main(): Promise<void> {
   let processed = 0;
   let failed = 0;
   let totalPages = 0;
+  let totalBytes = 0;
+  let fetchCount = 0;
+  let puppeteerCount = 0;
   
   for (let i = 0; i < businesses.length; i += concurrency) {
     const batch = businesses.slice(i, i + concurrency);
@@ -1037,7 +1081,7 @@ async function main(): Promise<void> {
         }
         
         const durationMs = Date.now() - startTime;
-        const totalBytes = pages.reduce((sum, p) => sum + p.html.length, 0);
+        const pageBytes = pages.reduce((sum, p) => sum + p.html.length, 0);
         
         // Extract data
         const extracted = extractAllData(pages);
@@ -1101,7 +1145,7 @@ async function main(): Promise<void> {
           extractedS3Key,
           method,
           pages.length,
-          totalBytes,
+          pageBytes,
           durationMs,
           0,
           extracted
@@ -1109,6 +1153,12 @@ async function main(): Promise<void> {
         
         processed++;
         totalPages += pages.length;
+        totalBytes += pageBytes;
+        if (method === 'puppeteer') {
+          puppeteerCount++;
+        } else {
+          fetchCount++;
+        }
         
         console.log(`  ✓ Scraped ${pages.length} pages, ${extracted.emails.length} emails, ${extracted.team_members.length} team members`);
         
@@ -1130,6 +1180,21 @@ async function main(): Promise<void> {
   console.log(`Processed: ${processed}`);
   console.log(`Failed: ${failed}`);
   console.log(`Total pages scraped: ${totalPages}`);
+  console.log(`Fetch: ${fetchCount}, Puppeteer: ${puppeteerCount}`);
+  console.log(`Total bytes: ${totalBytes}`);
+  
+  // Update job metrics
+  if (jobId) {
+    await updateJobMetrics(jobId, {
+      processed,
+      failed,
+      filtered: 0, // Scrape task processes all businesses that pass filter rules
+      fetch_count: fetchCount,
+      puppeteer_count: puppeteerCount,
+      total_pages: totalPages,
+      total_bytes: totalBytes,
+    });
+  }
 }
 
 main().catch(error => {

@@ -56,6 +56,8 @@ interface FilterRule {
 }
 
 interface JobInput {
+  // Job ID for metrics tracking
+  jobId?: string;
   // Campaign fields (optional for pipeline jobs)
   campaignId?: string;
   jobType: 'places' | 'pipeline';
@@ -78,6 +80,47 @@ interface JobInput {
   skipCachedSearches?: boolean; // Skip searches run in the last 30 days
 }
 
+interface JobMetrics {
+  search?: {
+    queries_run: number;
+    businesses_found: number;
+    cached_skipped?: number;
+  };
+  details?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+  };
+  scrape?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    fetch_count: number;
+    puppeteer_count: number;
+    total_pages: number;
+    total_bytes: number;
+  };
+  enrich?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    with_reviews: number;
+    without_reviews: number;
+  };
+  photos?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    photos_downloaded: number;
+  };
+  copy?: {
+    processed: number;
+    failed: number;
+    filtered: number;
+    skipped_no_reviews: number;
+  };
+}
+
 interface Job {
   job_id: string;
   created_at: string;
@@ -92,6 +135,7 @@ interface Job {
   completed_at?: string;
   error?: string;
   expires_at?: number; // TTL for auto-cleanup (30 days)
+  metrics?: JobMetrics;
 }
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> {
@@ -259,8 +303,12 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
     });
   }
   
-  // Build job input
+  // Generate job ID first so it can be included in input
+  const jobId = randomUUID();
+  
+  // Build job input (includes jobId for metrics tracking)
   const jobInput: JobInput = {
+    jobId,
     jobType: 'pipeline',
     runSearch: false,  // Pipeline jobs don't search
     runDetails,
@@ -271,9 +319,6 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
     filterRules: filterRules.length > 0 ? filterRules : undefined,
     placeIds: placeIds?.length ? placeIds : undefined,
   };
-  
-  // Generate job ID and name
-  const jobId = randomUUID();
   const createdAt = new Date().toISOString();
   
   // Build human-readable job name
@@ -294,7 +339,7 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
     input: JSON.stringify(jobInput),
   }));
   
-  // Create job record
+  // Create job record with empty metrics object for each enabled step
   const job: Job = {
     job_id: jobId,
     created_at: createdAt,
@@ -305,6 +350,7 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
     input: jobInput,
     started_at: startResult.startDate?.toISOString(),
     expires_at: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days TTL
+    metrics: {}, // Tasks will populate their metrics
   };
   
   await docClient.send(new PutCommand({
@@ -347,11 +393,15 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     });
   }
   
-  // Build job input from campaign
+  // Generate job ID first so it can be included in input
+  const jobId = randomUUID();
+  
+  // Build job input from campaign (includes jobId for metrics tracking)
   // Campaigns only run search to find new businesses
   const dataTier = campaign.data_tier || 'enterprise';
   
   const jobInput: JobInput = {
+    jobId,
     campaignId: campaign.campaign_id,
     jobType: 'places',
     searchesS3Key: campaign.searches_s3_key,  // Search task will fetch from S3
@@ -368,9 +418,6 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     // Cache options
     skipCachedSearches,
   };
-  
-  // Generate job ID
-  const jobId = randomUUID();
   const createdAt = new Date().toISOString();
   
   // Start Step Functions execution
@@ -389,7 +436,7 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     enterprise_atmosphere: 'Enterprise+Atm',
   };
   
-  // Create job record
+  // Create job record with empty metrics object
   const job: Job = {
     job_id: jobId,
     created_at: createdAt,
@@ -402,6 +449,7 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     input: jobInput,
     started_at: startResult.startDate?.toISOString(),
     expires_at: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60), // 30 days TTL
+    metrics: {}, // Tasks will populate their metrics
   };
   
   await docClient.send(new PutCommand({

@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, BatchWriteCommand, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, BatchWriteCommand, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import * as crypto from 'crypto';
 
@@ -109,6 +109,7 @@ console.log(`Per-key rate limit: ${RATE_LIMIT_PER_KEY_PER_SECOND} req/sec × ${a
 const BUSINESSES_TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
 const SEARCH_CACHE_TABLE_NAME = process.env.SEARCH_CACHE_TABLE_NAME!;
 const CAMPAIGN_DATA_BUCKET = process.env.CAMPAIGN_DATA_BUCKET!;
+const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME;
 
 // TTL for search cache: 30 days
 const CACHE_TTL_DAYS = 30;
@@ -130,6 +131,9 @@ interface SearchQuery {
 }
 
 interface JobInput {
+  // Job ID for metrics tracking
+  jobId?: string;
+  
   // Task flags
   runSearch?: boolean;
   runDetails?: boolean;
@@ -709,6 +713,34 @@ async function writeSearchCache(search: SearchQuery, resultsCount: number): Prom
   }
 }
 
+// ============ Job Metrics ============
+
+/**
+ * Update job metrics in DynamoDB
+ */
+async function updateJobMetrics(
+  jobId: string, 
+  metrics: { queries_run: number; businesses_found: number; cached_skipped: number }
+): Promise<void> {
+  if (!JOBS_TABLE_NAME) {
+    console.warn('JOBS_TABLE_NAME not set, skipping metrics update');
+    return;
+  }
+  
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: JOBS_TABLE_NAME,
+      Key: { job_id: jobId },
+      UpdateExpression: 'SET metrics.#step = :metrics',
+      ExpressionAttributeNames: { '#step': 'search' },
+      ExpressionAttributeValues: { ':metrics': metrics },
+    }));
+    console.log(`Updated job metrics for ${jobId}`);
+  } catch (error) {
+    console.error('Failed to update job metrics:', error);
+  }
+}
+
 // ============ Main ============
 
 const TIER_COSTS: Record<DataTier, number> = {
@@ -766,6 +798,7 @@ async function main(): Promise<void> {
   }
 
   const { 
+    jobId,
     searchesS3Key,
     maxResultsPerSearch = 60,
     skipCachedSearches = false,
@@ -902,6 +935,15 @@ async function main(): Promise<void> {
   console.log('\n=== Search Task Complete ===');
   console.log(`Total businesses saved: ${totalSaved}`);
   console.log(`Data tier used: ${dataTier}`);
+  
+  // Update job metrics
+  if (jobId) {
+    await updateJobMetrics(jobId, {
+      queries_run: searches.length,
+      businesses_found: totalSaved,
+      cached_skipped: skippedCount,
+    });
+  }
   
   if (dataTier === 'enterprise_atmosphere') {
     console.log('All data fetched! Next step: Run photos-task for photos, then copy-task for LLM copy');
