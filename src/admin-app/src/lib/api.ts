@@ -485,6 +485,7 @@ export interface StartPipelineJobOptions {
   runPhotos: boolean;
   runCopy: boolean;
   runScrape: boolean;
+  forceRescrape?: boolean;
   filterRules?: PipelineFilterRule[];
   placeIds?: string[];
 }

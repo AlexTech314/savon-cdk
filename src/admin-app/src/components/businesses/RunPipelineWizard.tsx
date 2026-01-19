@@ -171,6 +171,9 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
   // Step 2: Specific place IDs (optional)
   const [placeIds, setPlaceIds] = useState<string[]>([]);
   const [placeIdsInput, setPlaceIdsInput] = useState('');
+  
+  // Scrape options
+  const [forceRescrape, setForceRescrape] = useState(false);
 
   // Toggle a pipeline step
   const toggleStep = (stepId: string) => {
@@ -382,6 +385,7 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
         runPhotos: selectedSteps.has('photos'),
         runCopy: selectedSteps.has('copy'),
         runScrape: selectedSteps.has('scrape'),
+        forceRescrape: forceRescrape || undefined,
         filterRules: filterRules.length > 0 ? filterRules : undefined,
         placeIds: placeIds.length > 0 ? placeIds : undefined,
       });
@@ -529,6 +533,31 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
                   );
                 })}
               </div>
+              
+              {/* Force Re-scrape Option (only shown when Scrape is selected) */}
+              {selectedSteps.has('scrape') && (
+                <div className="mt-4 pt-4 border-t border-border">
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id="forceRescrape"
+                      checked={forceRescrape}
+                      onCheckedChange={(checked) => setForceRescrape(checked === true)}
+                      className="mt-0.5"
+                    />
+                    <div>
+                      <Label 
+                        htmlFor="forceRescrape"
+                        className="font-medium cursor-pointer"
+                      >
+                        Force Re-scrape
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        Re-scrape all businesses, even if already scraped
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
