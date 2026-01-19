@@ -537,6 +537,7 @@ export class AppStack extends cdk.Stack {
       logGroup: configLogGroup,
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
         CLAUDE_API_KEY: claudeSecret.secretValue.unsafeUnwrap(),
         GOOGLE_API_KEY_ORIGINAL: googleSecretOriginal.secretValue.unsafeUnwrap(),
         GOOGLE_API_KEY_OUTREACH: googleSecretOutreach.secretValue.unsafeUnwrap(),
@@ -547,6 +548,7 @@ export class AppStack extends cdk.Stack {
     });
 
     businessesTable.grantReadWriteData(configLambda);
+    campaignDataBucket.grantRead(configLambda);
     claudeSecret.grantRead(configLambda);
     googleSecretOriginal.grantRead(configLambda);
     googleSecretOutreach.grantRead(configLambda);
@@ -719,6 +721,14 @@ export class AppStack extends cdk.Stack {
     httpApi.addRoutes({
       path: '/businesses/{place_id}/generate-photos',
       methods: [apigwv2.HttpMethod.POST],
+      integration: configIntegration,
+      authorizer,
+    });
+
+    // Get presigned URLs for scraped data
+    httpApi.addRoutes({
+      path: '/businesses/{place_id}/scrape-data',
+      methods: [apigwv2.HttpMethod.GET],
       integration: configIntegration,
       authorizer,
     });

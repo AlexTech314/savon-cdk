@@ -9,18 +9,23 @@ import {
   BatchWriteCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
 import Anthropic from '@anthropic-ai/sdk';
 
-const client = new DynamoDBClient({});
-const docClient = DynamoDBDocumentClient.from(client, {
+const dynamoClient = new DynamoDBClient({});
+const docClient = DynamoDBDocumentClient.from(dynamoClient, {
   marshallOptions: {
     removeUndefinedValues: true,
   },
 });
+const s3Client = new S3Client({});
+
 const TABLE_NAME = process.env.BUSINESSES_TABLE_NAME!;
+const CAMPAIGN_DATA_BUCKET = process.env.CAMPAIGN_DATA_BUCKET!;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
 // ============ Google API Key Rotation with Per-Key Rate Limiting ============
@@ -208,6 +213,11 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       return await getPreview(pathParameters?.place_id!);
     }
     
+    // GET /businesses/{place_id}/scrape-data - Get presigned URLs for scraped data
+    if (routeKey === 'GET /businesses/{place_id}/scrape-data') {
+      return await getScrapeDataUrls(pathParameters?.place_id!);
+    }
+    
     return response(404, { error: 'Not found' });
   } catch (error) {
     console.error('Error:', error);
@@ -238,7 +248,7 @@ async function listBusinesses(
   // FAST PATH: No filters at all - use native DynamoDB pagination
   if (!hasAnyFilters) {
     // Get approximate total count from table metadata (instant, no scan)
-    const tableInfo = await client.send(new DescribeTableCommand({ TableName: TABLE_NAME }));
+    const tableInfo = await dynamoClient.send(new DescribeTableCommand({ TableName: TABLE_NAME }));
     totalCount = tableInfo.Table?.ItemCount || 0;
 
     // For pagination beyond page 1, we need to scan with offset
@@ -710,7 +720,6 @@ interface FilterRule {
 
 interface CountRequest {
   filterRules?: FilterRule[];
-  skipWithWebsite?: boolean;
   // Which pipeline steps are selected (to check which steps are already complete)
   runDetails?: boolean;
   runEnrich?: boolean;
@@ -723,7 +732,7 @@ interface CountRequest {
 
 async function countBusinesses(body?: string): Promise<APIGatewayProxyResultV2> {
   const request: CountRequest = body ? JSON.parse(body) : {};
-  const { filterRules = [], skipWithWebsite = true, runDetails, runEnrich, runPhotos, runCopy, runScrape, placeIds } = request;
+  const { filterRules = [], runDetails, runEnrich, runPhotos, runCopy, runScrape, placeIds } = request;
   
   // Scan all items and apply filters
   const items: Record<string, unknown>[] = [];
@@ -748,11 +757,6 @@ async function countBusinesses(body?: string): Promise<APIGatewayProxyResultV2> 
     filtered = filtered.filter(item => 
       placeIds.includes(item.place_id as string)
     );
-  }
-  
-  // Skip businesses with website if enabled
-  if (skipWithWebsite) {
-    filtered = filtered.filter(item => !item.has_website);
   }
   
   // Apply custom filter rules (all must match - AND logic)
@@ -1896,3 +1900,76 @@ async function generateCopyInternal(placeId: string): Promise<void> {
   }));
 }
 
+/**
+ * GET /businesses/{place_id}/scrape-data
+ * Get presigned URLs for scraped data (raw and extracted)
+ */
+async function getScrapeDataUrls(placeId: string): Promise<APIGatewayProxyResultV2> {
+  // Get business to find S3 keys
+  const result = await docClient.send(new GetCommand({
+    TableName: TABLE_NAME,
+    Key: { place_id: placeId },
+  }));
+  
+  if (!result.Item) {
+    return response(404, { error: 'Business not found' });
+  }
+  
+  const business = result.Item as Record<string, unknown>;
+  
+  if (!business.web_scraped) {
+    return response(404, { error: 'No scrape data available for this business' });
+  }
+  
+  const rawS3Key = business.web_raw_s3_key as string | undefined;
+  const extractedS3Key = business.web_extracted_s3_key as string | undefined;
+  
+  if (!rawS3Key && !extractedS3Key) {
+    return response(404, { error: 'No scrape data files found' });
+  }
+  
+  // Generate presigned URLs (valid for 1 hour)
+  const expiresIn = 3600;
+  
+  const urls: {
+    raw?: { url: string; key: string };
+    extracted?: { url: string; key: string };
+  } = {};
+  
+  if (rawS3Key) {
+    const rawUrl = await getSignedUrl(
+      s3Client,
+      new GetObjectCommand({
+        Bucket: CAMPAIGN_DATA_BUCKET,
+        Key: rawS3Key,
+      }),
+      { expiresIn }
+    );
+    urls.raw = { url: rawUrl, key: rawS3Key };
+  }
+  
+  if (extractedS3Key) {
+    const extractedUrl = await getSignedUrl(
+      s3Client,
+      new GetObjectCommand({
+        Bucket: CAMPAIGN_DATA_BUCKET,
+        Key: extractedS3Key,
+      }),
+      { expiresIn }
+    );
+    urls.extracted = { url: extractedUrl, key: extractedS3Key };
+  }
+  
+  return response(200, {
+    place_id: placeId,
+    urls,
+    scrape_metadata: {
+      scraped_at: business.web_scraped_at,
+      pages_count: business.web_pages_count,
+      scrape_method: business.web_scrape_method,
+      total_bytes: business.web_total_bytes,
+      duration_ms: business.web_scrape_duration_ms,
+    },
+    expires_in: expiresIn,
+  });
+}

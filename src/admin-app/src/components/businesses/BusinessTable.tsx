@@ -54,7 +54,7 @@ interface ColumnDef {
   label: string;
   sortable: boolean;
   defaultVisible: boolean;
-  category: 'core' | 'contact' | 'location' | 'metrics' | 'pipeline' | 'meta';
+  category: 'core' | 'contact' | 'location' | 'metrics' | 'pipeline' | 'scrape' | 'meta';
   render?: (business: Business) => React.ReactNode;
 }
 
@@ -82,6 +82,14 @@ const ALL_COLUMNS: ColumnDef[] = [
   { key: 'data_tier', label: 'Data Tier', sortable: true, defaultVisible: false, category: 'pipeline' },
   { key: 'has_website', label: 'Has Site', sortable: true, defaultVisible: false, category: 'pipeline' },
   
+  // Web Scrape
+  { key: 'web_scraped', label: 'Scraped', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_scraped_at', label: 'Scraped At', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_pages_count', label: 'Pages', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_scrape_method', label: 'Method', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_total_bytes', label: 'Size', sortable: true, defaultVisible: false, category: 'scrape' },
+  { key: 'web_scrape_duration_ms', label: 'Duration', sortable: true, defaultVisible: false, category: 'scrape' },
+  
   // Meta
   { key: 'friendly_slug', label: 'Slug', sortable: true, defaultVisible: false, category: 'meta' },
   { key: 'created_at', label: 'Created', sortable: true, defaultVisible: false, category: 'meta' },
@@ -97,6 +105,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   location: 'Location',
   metrics: 'Metrics',
   pipeline: 'Pipeline',
+  scrape: 'Web Scrape',
   meta: 'Metadata',
 };
 
@@ -380,6 +389,45 @@ const formatCellValue = (
           {value as string}
         </span>
       );
+    
+    case 'web_scraped':
+      return value ? (
+        <Badge variant="secondary" className="bg-green-500/10 text-green-600">Yes</Badge>
+      ) : (
+        <Badge variant="secondary" className="bg-muted text-muted-foreground">No</Badge>
+      );
+    
+    case 'web_scraped_at':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <span className="text-sm text-muted-foreground">
+          {new Date(value as string).toLocaleDateString()}
+        </span>
+      );
+    
+    case 'web_pages_count':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return <span>{value as number} pages</span>;
+    
+    case 'web_scrape_method':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      return (
+        <Badge variant="outline">
+          {value === 'puppeteer' ? 'Puppeteer' : 'Fetch'}
+        </Badge>
+      );
+    
+    case 'web_total_bytes':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      const bytes = value as number;
+      const kb = bytes / 1024;
+      const mb = kb / 1024;
+      return <span>{mb >= 1 ? `${mb.toFixed(1)} MB` : `${kb.toFixed(0)} KB`}</span>;
+    
+    case 'web_scrape_duration_ms':
+      if (!value) return <span className="text-muted-foreground">—</span>;
+      const ms = value as number;
+      return <span>{ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`}</span>;
     
     default:
       if (value === undefined || value === null || value === '') {

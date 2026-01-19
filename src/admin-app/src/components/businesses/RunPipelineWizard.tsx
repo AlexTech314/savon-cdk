@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -14,7 +14,6 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -34,7 +33,6 @@ import {
   Info,
   AlertTriangle,
   Loader2,
-  Globe,
 } from 'lucide-react';
 import { 
   startPipelineJob, 
@@ -54,7 +52,14 @@ interface RunPipelineWizardProps {
   totalBusinesses: number;
 }
 
-const PIPELINE_STEPS = [
+const PIPELINE_STEPS: readonly {
+  id: string;
+  label: string;
+  description: string;
+  unitCost: number;
+  provider: string;
+  requires: readonly string[];
+}[] = [
   { 
     id: 'details', 
     label: 'Details', 
@@ -96,7 +101,7 @@ const PIPELINE_STEPS = [
     provider: 'AWS Fargate',
     requires: [],
   },
-] as const;
+];
 
 const FILTERABLE_FIELDS = [
   // Basic fields
@@ -166,9 +171,6 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
   // Step 2: Specific place IDs (optional)
   const [placeIds, setPlaceIds] = useState<string[]>([]);
   const [placeIdsInput, setPlaceIdsInput] = useState('');
-  
-  // Step 3: Options
-  const [skipWithWebsite, setSkipWithWebsite] = useState(true);
 
   // Toggle a pipeline step
   const toggleStep = (stepId: string) => {
@@ -228,17 +230,15 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
   };
 
   // Query to get accurate count based on filter rules
-  const { data: countData, isLoading: isCountLoading, refetch: refetchCount } = useQuery({
+  const { data: countData, isLoading: isCountLoading } = useQuery({
     queryKey: [
       'businessCount',
       Array.from(selectedSteps),
       filterRules,
-      skipWithWebsite,
       placeIds,
     ],
     queryFn: () => countBusinesses({
       filterRules: filterRules.length > 0 ? filterRules : undefined,
-      skipWithWebsite,
       runDetails: selectedSteps.has('details'),
       runEnrich: selectedSteps.has('enrich'),
       runPhotos: selectedSteps.has('photos'),
@@ -382,7 +382,6 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
         runPhotos: selectedSteps.has('photos'),
         runCopy: selectedSteps.has('copy'),
         runScrape: selectedSteps.has('scrape'),
-        skipWithWebsite,
         filterRules: filterRules.length > 0 ? filterRules : undefined,
         placeIds: placeIds.length > 0 ? placeIds : undefined,
       });
@@ -416,7 +415,6 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
     setFilterRules([]);
     setPlaceIds([]);
     setPlaceIdsInput('');
-    setSkipWithWebsite(true);
     onClose();
   };
 
@@ -653,26 +651,49 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
           {step === 3 && (
             <div className="space-y-4">
               <div>
-                <Label className="text-base">Options</Label>
+                <Label className="text-base">Ready to Continue</Label>
                 <p className="text-sm text-muted-foreground">
-                  Configure pipeline behavior
+                  Review your filter settings
                 </p>
               </div>
 
               <div className="space-y-4 p-4 rounded-lg border border-border bg-muted/30">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="skip-website">Skip businesses with websites</Label>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Filtering Options</p>
+                  <p className="text-sm text-muted-foreground">
+                    Use filter rules in Step 2 to control which businesses are processed.
+                    For example, to skip businesses with websites, add a filter rule:
+                    <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded ml-1">
+                      has_website = NOT_EXISTS
+                    </span>
+                  </p>
+                </div>
+                
+                {/* Current filter summary */}
+                {filterRules.length > 0 ? (
+                  <div className="pt-2 border-t border-border">
+                    <p className="text-sm font-medium mb-1">Active Filters ({filterRules.length}):</p>
+                    <div className="flex flex-wrap gap-1">
+                      {filterRules.map((rule, i) => (
+                        <Badge key={i} variant="secondary" className="text-xs">
+                          {rule.field} {rule.operator} {rule.value || ''}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                ) : placeIds.length > 0 ? (
+                  <div className="pt-2 border-t border-border">
                     <p className="text-sm text-muted-foreground">
-                      Exclude businesses that already have a website
+                      Running on {placeIds.length} specific place ID(s)
                     </p>
                   </div>
-                  <Switch
-                    id="skip-website"
-                    checked={skipWithWebsite}
-                    onCheckedChange={setSkipWithWebsite}
-                  />
-                </div>
+                ) : (
+                  <div className="pt-2 border-t border-border">
+                    <p className="text-sm text-muted-foreground">
+                      No filters applied - will process all businesses
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -713,13 +734,15 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
                   </div>
                 )}
 
-                {/* Options */}
-                <div className="p-3 rounded-lg border border-border bg-muted/30">
-                  <p className="text-sm font-medium mb-2">Options:</p>
-                  <p className="text-sm text-muted-foreground">
-                    Skip businesses with websites: {skipWithWebsite ? 'Yes' : 'No'}
-                  </p>
-                </div>
+                {/* Place IDs */}
+                {placeIds.length > 0 && (
+                  <div className="p-3 rounded-lg border border-border bg-muted/30">
+                    <p className="text-sm font-medium mb-2">Specific Place IDs:</p>
+                    <p className="text-sm text-muted-foreground">
+                      {placeIds.length} business(es) selected
+                    </p>
+                  </div>
+                )}
 
                 {/* Cost estimate - comprehensive breakdown */}
                 <div className="p-3 rounded-lg border border-primary/30 bg-primary/5">

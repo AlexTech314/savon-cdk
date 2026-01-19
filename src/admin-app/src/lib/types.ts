@@ -29,6 +29,16 @@ export interface Business {
   
   // Data tier used during search
   data_tier?: 'pro' | 'enterprise' | 'enterprise_atmosphere';
+  
+  // Web scrape data
+  web_scraped?: boolean;
+  web_scraped_at?: string;
+  web_raw_s3_key?: string;
+  web_extracted_s3_key?: string;
+  web_pages_count?: number;
+  web_scrape_method?: 'fetch' | 'puppeteer';
+  web_total_bytes?: number;
+  web_scrape_duration_ms?: number;
 }
 
 export interface Job {

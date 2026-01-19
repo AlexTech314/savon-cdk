@@ -114,7 +114,6 @@ interface JobInput {
   // Options
   concurrency?: number;
   skipIfDone?: boolean;
-  skipWithWebsite?: boolean;
   maxPhotosPerBusiness?: number;
   
   // Filter rules
@@ -239,7 +238,6 @@ function buildPhotoUrl(photoName: string, maxWidth = 800): string {
  */
 async function getBusinessesNeedingPhotos(
   placeIds?: string[], 
-  skipWithWebsite = true,
   filterRules: FilterRule[] = []
 ): Promise<Business[]> {
   const businesses: Business[] = [];
@@ -248,10 +246,6 @@ async function getBusinessesNeedingPhotos(
   // Build base filter expression
   let baseExpression = '(attribute_not_exists(photos_fetched) OR photos_fetched = :false) AND details_fetched = :true';
   const baseValues: Record<string, unknown> = { ':false': false, ':true': true };
-  
-  if (skipWithWebsite) {
-    baseExpression += ' AND (attribute_not_exists(has_website) OR has_website = :false)';
-  }
 
   // Build filter with rules
   const { expression, names, values } = buildFilterFromRules(
@@ -278,8 +272,7 @@ async function getBusinessesNeedingPhotos(
       businesses.push(...items.filter(b => 
         placeIds.includes(b.place_id) && 
         (!b.photos_fetched) && 
-        b.details_fetched &&
-        (!skipWithWebsite || !b.has_website)
+        b.details_fetched
       ));
     } else {
       businesses.push(...items);
@@ -366,19 +359,17 @@ async function main(): Promise<void> {
   const placeIds = jobInput.placeIds;
   const concurrency = jobInput.concurrency || 5;
   const skipIfDone = jobInput.skipIfDone !== false; // Default true
-  const skipWithWebsite = jobInput.skipWithWebsite !== false; // Default true
   const maxPhotosPerBusiness = jobInput.maxPhotosPerBusiness || 5;
   const filterRules = jobInput.filterRules || [];
 
   console.log(`Concurrency: ${concurrency}`);
   console.log(`Specific place IDs: ${placeIds ? placeIds.length : 'all needing photos'}`);
   console.log(`Skip if already done: ${skipIfDone}`);
-  console.log(`Skip with website: ${skipWithWebsite}`);
   console.log(`Max photos per business: ${maxPhotosPerBusiness}`);
   console.log(`Filter rules: ${filterRules.length > 0 ? JSON.stringify(filterRules) : 'none'}`);
 
   // Get businesses that need photos
-  let businesses = await getBusinessesNeedingPhotos(placeIds, skipWithWebsite, filterRules);
+  let businesses = await getBusinessesNeedingPhotos(placeIds, filterRules);
   
   // If skipIfDone is true and we have specific placeIds, filter out already-done ones
   if (skipIfDone && placeIds) {

@@ -70,8 +70,6 @@ interface JobInput {
   runPhotos: boolean;
   runCopy: boolean;
   runScrape: boolean;
-  // Pipeline options
-  skipWithWebsite?: boolean;
   // Filter rules - only process businesses matching ALL rules
   filterRules?: FilterRule[];
   // Specific place IDs to process (optional - if provided, only these are processed)
@@ -218,7 +216,6 @@ interface PipelineJobRequest {
   runPhotos: boolean;
   runCopy: boolean;
   runScrape?: boolean;
-  skipWithWebsite?: boolean;
   filterRules?: FilterRule[];
   placeIds?: string[];
 }
@@ -252,7 +249,7 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
 
 async function startPipelineJob(request: PipelineJobRequest): Promise<APIGatewayProxyResultV2> {
   const { runDetails, runEnrich, runPhotos, runCopy, runScrape = false, 
-          skipWithWebsite = true, filterRules = [], placeIds } = request;
+          filterRules = [], placeIds } = request;
   
   // At least one step must be selected
   if (!runDetails && !runEnrich && !runPhotos && !runCopy && !runScrape) {
@@ -271,7 +268,6 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
     runPhotos,
     runCopy,
     runScrape,
-    skipWithWebsite,
     filterRules: filterRules.length > 0 ? filterRules : undefined,
     placeIds: placeIds?.length ? placeIds : undefined,
   };

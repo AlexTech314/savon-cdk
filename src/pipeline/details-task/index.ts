@@ -114,7 +114,6 @@ interface JobInput {
   // Options
   concurrency?: number;
   skipIfDone?: boolean;
-  skipWithWebsite?: boolean;
   
   // Filter rules - only process businesses matching ALL rules
   filterRules?: FilterRule[];

@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getBusiness, updateBusiness, deleteBusiness, generateCopy } from '@/lib/api';
+import { getBusiness, deleteBusiness, generateCopy, getScrapeData } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -29,8 +29,11 @@ import {
   Trash2,
   FileText,
   Loader2,
+  Download,
+  FileJson,
+  Eye,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 
 const BusinessDetailPage: React.FC = () => {
   const { place_id } = useParams<{ place_id: string }>();
@@ -44,6 +47,17 @@ const BusinessDetailPage: React.FC = () => {
     queryFn: () => getBusiness(place_id!),
     enabled: !!place_id,
   });
+
+  // Fetch scrape data URLs if business has been scraped
+  const { data: scrapeData, isLoading: isScrapeDataLoading, refetch: refetchScrapeData } = useQuery({
+    queryKey: ['scrapeData', place_id],
+    queryFn: () => getScrapeData(place_id!),
+    enabled: !!place_id && !!business?.web_scraped,
+  });
+
+  // State for extracted data preview
+  const [extractedPreview, setExtractedPreview] = useState<unknown | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: () => deleteBusiness(place_id!),
@@ -87,6 +101,72 @@ const BusinessDetailPage: React.FC = () => {
   const handlePreview = () => {
     // Open preview in main UI's iframe wrapper at /preview/:id
     window.open(`https://alpha.savondesigns.com/preview/${place_id}`, '_blank');
+  };
+
+  // Load and decompress extracted data for preview
+  const loadExtractedPreview = async () => {
+    if (!scrapeData?.urls.extracted?.url) return;
+    
+    setIsLoadingPreview(true);
+    try {
+      const response = await fetch(scrapeData.urls.extracted.url);
+      const blob = await response.blob();
+      
+      // Decompress gzip
+      const ds = new DecompressionStream('gzip');
+      const decompressedStream = blob.stream().pipeThrough(ds);
+      const decompressedBlob = await new Response(decompressedStream).blob();
+      const text = await decompressedBlob.text();
+      const data = JSON.parse(text);
+      
+      setExtractedPreview(data);
+    } catch (error) {
+      console.error('Failed to load preview:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load scraped data preview.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
+  // Download handler
+  const handleDownload = async (url: string, filename: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      
+      // Decompress gzip
+      const ds = new DecompressionStream('gzip');
+      const decompressedStream = blob.stream().pipeThrough(ds);
+      const decompressedBlob = await new Response(decompressedStream).blob();
+      
+      // Create download link
+      const downloadUrl = URL.createObjectURL(decompressedBlob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = filename.replace('.gz', '');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('Failed to download:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to download file.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const formatBytes = (bytes?: number) => {
+    if (!bytes) return 'N/A';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   if (isLoading) {
@@ -293,6 +373,121 @@ const BusinessDetailPage: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Scraped Data Section */}
+      {business.web_scraped && (
+        <Card className="card-gradient border-border">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="h-5 w-5 text-primary" />
+              Scraped Website Data
+            </CardTitle>
+            {business.web_scraped_at && (
+              <Badge variant="secondary" className="text-xs">
+                Scraped {formatDistanceToNow(new Date(business.web_scraped_at), { addSuffix: true })}
+              </Badge>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Scrape Metadata */}
+            <div className="grid gap-4 sm:grid-cols-4 p-4 bg-muted/50 rounded-lg">
+              <div>
+                <p className="text-xs text-muted-foreground">Method</p>
+                <p className="text-sm font-medium capitalize">{business.web_scrape_method || 'N/A'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Pages Scraped</p>
+                <p className="text-sm font-medium">{business.web_pages_count || 0}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Total Size</p>
+                <p className="text-sm font-medium">{formatBytes(business.web_total_bytes)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Duration</p>
+                <p className="text-sm font-medium">
+                  {business.web_scrape_duration_ms 
+                    ? `${(business.web_scrape_duration_ms / 1000).toFixed(1)}s` 
+                    : 'N/A'}
+                </p>
+              </div>
+            </div>
+
+            {/* Download Buttons */}
+            <div className="flex flex-wrap gap-3">
+              {scrapeData?.urls.extracted && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadExtractedPreview}
+                    disabled={isLoadingPreview}
+                    className="gap-2"
+                  >
+                    {isLoadingPreview ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                    Preview Extracted Data
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDownload(
+                      scrapeData.urls.extracted!.url,
+                      `${place_id}-extracted.json`
+                    )}
+                    className="gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download Extracted
+                  </Button>
+                </>
+              )}
+              {scrapeData?.urls.raw && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDownload(
+                    scrapeData.urls.raw!.url,
+                    `${place_id}-raw.json`
+                  )}
+                  className="gap-2"
+                >
+                  <FileJson className="h-4 w-4" />
+                  Download Raw HTML
+                </Button>
+              )}
+              {isScrapeDataLoading && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading download links...
+                </div>
+              )}
+            </div>
+
+            {/* Extracted Data Preview */}
+            {extractedPreview && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium">Extracted Data Preview</p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setExtractedPreview(null)}
+                  >
+                    Close Preview
+                  </Button>
+                </div>
+                <pre className="p-4 bg-muted rounded-lg text-xs overflow-auto max-h-96">
+                  {JSON.stringify(extractedPreview, null, 2)}
+                </pre>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Delete confirmation */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

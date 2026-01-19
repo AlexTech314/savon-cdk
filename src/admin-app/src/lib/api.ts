@@ -416,7 +416,6 @@ export interface PipelineFilterRule {
  */
 export interface CountBusinessesRequest {
   filterRules?: PipelineFilterRule[];
-  skipWithWebsite?: boolean;
   runDetails?: boolean;
   runEnrich?: boolean;
   runPhotos?: boolean;
@@ -458,7 +457,6 @@ export interface StartPipelineJobOptions {
   runPhotos: boolean;
   runCopy: boolean;
   runScrape: boolean;
-  skipWithWebsite?: boolean;
   filterRules?: PipelineFilterRule[];
   placeIds?: string[];
 }
@@ -579,6 +577,35 @@ export const generateCopy = async (place_id: string): Promise<Business> => {
   );
   
   return transformBusiness(response);
+};
+
+// ============================================
+// SCRAPE DATA API
+// ============================================
+
+export interface ScrapeDataUrls {
+  raw?: { url: string; key: string };
+  extracted?: { url: string; key: string };
+}
+
+export interface ScrapeDataResponse {
+  place_id: string;
+  urls: ScrapeDataUrls;
+  scrape_metadata: {
+    scraped_at?: string;
+    pages_count?: number;
+    scrape_method?: string;
+    total_bytes?: number;
+    duration_ms?: number;
+  };
+  expires_in: number;
+}
+
+export const getScrapeData = async (place_id: string): Promise<ScrapeDataResponse> => {
+  return apiClient<ScrapeDataResponse>(
+    `/businesses/${encodeURIComponent(place_id)}/scrape-data`,
+    { requiresAuth: true }
+  );
 };
 
 // ============================================
