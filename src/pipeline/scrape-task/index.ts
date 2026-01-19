@@ -1023,13 +1023,19 @@ async function updateBusinessWithScrapeData(
     }
   });
   
-  await docClient.send(new UpdateCommand({
-    TableName: BUSINESSES_TABLE_NAME,
-    Key: { place_id: placeId },
-    UpdateExpression: `SET ${updateParts.join(', ')}`,
-    ExpressionAttributeNames: expressionNames,
-    ExpressionAttributeValues: expressionValues,
-  }));
+  try {
+    await docClient.send(new UpdateCommand({
+      TableName: BUSINESSES_TABLE_NAME,
+      Key: { place_id: placeId },
+      UpdateExpression: `SET ${updateParts.join(', ')}`,
+      ExpressionAttributeNames: expressionNames,
+      ExpressionAttributeValues: expressionValues,
+    }));
+    console.log(`  [DynamoDB] Updated ${placeId} with ${updateParts.length} fields`);
+  } catch (error) {
+    console.error(`  [DynamoDB ERROR] Failed to update ${placeId}:`, error);
+    throw error;
+  }
 }
 
 // ============ Filter Rule Helpers ============
@@ -1254,6 +1260,22 @@ async function main(): Promise<void> {
         
         if (pages.length === 0) {
           console.log(`  ✗ No pages scraped for ${business.business_name}`);
+          // Mark as scraped (failed) so we don't retry indefinitely
+          try {
+            await docClient.send(new UpdateCommand({
+              TableName: BUSINESSES_TABLE_NAME,
+              Key: { place_id: business.place_id },
+              UpdateExpression: 'SET web_scraped = :true, web_scrape_status = :status, web_scraped_at = :at',
+              ExpressionAttributeValues: {
+                ':true': true,
+                ':status': 'failed',
+                ':at': new Date().toISOString(),
+              },
+            }));
+            console.log(`  Updated ${business.place_id} with failed status`);
+          } catch (updateError) {
+            console.error(`  Failed to update failed status for ${business.place_id}:`, updateError);
+          }
           failed++;
           return;
         }
