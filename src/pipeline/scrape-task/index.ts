@@ -2,8 +2,11 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { gzipSync } from 'zlib';
+import { createRequire } from 'module';
 import puppeteer, { Browser } from 'puppeteer';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+
+// cloudscraper uses CommonJS, need createRequire for ES modules
+const require = createRequire(import.meta.url);
 const cloudscraper = require('cloudscraper');
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
