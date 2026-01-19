@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { DefaultStackSynthesizer } from 'aws-cdk-lib';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 
@@ -68,6 +69,35 @@ export class EcrCacheStack extends cdk.Stack {
           },
         ],
       },
+    });
+
+    // ============================================================
+    // IAM Policy for Bootstrap Role
+    // ============================================================
+    // The CDK bootstrap image-publishing role needs IAM permissions to pull
+    // from cached repos. assetPublishingCodeBuildDefaults only adds to the
+    // CodeBuild service role, but Docker uses the assumed bootstrap role.
+    // Use CfnPolicy to attach directly to the bootstrap role by name.
+    const imagePublishingRoleName = `cdk-${qualifier}-image-publishing-role-${this.account}-${this.region}`;
+
+    new iam.CfnPolicy(this, 'EcrPullThroughCachePolicy', {
+      policyName: 'EcrPullThroughCacheAccess',
+      policyDocument: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Sid: 'AllowPullFromGhcrCache',
+            Effect: 'Allow',
+            Action: [
+              'ecr:BatchGetImage',
+              'ecr:GetDownloadUrlForLayer',
+              'ecr:BatchCheckLayerAvailability',
+            ],
+            Resource: `arn:aws:ecr:${this.region}:${this.account}:repository/ghcr/*`,
+          },
+        ],
+      },
+      roles: [imagePublishingRoleName],
     });
 
     // ============================================================

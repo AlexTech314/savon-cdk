@@ -2,7 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as pipelines from 'aws-cdk-lib/pipelines';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import { AlphaStage } from './stages/alpha-stage';
 
 export class PipelineStack extends cdk.Stack {
@@ -88,24 +87,6 @@ export class PipelineStack extends cdk.Stack {
             },
           },
         }),
-      },
-
-      // IAM permissions for ECR pull-through cache
-      // Registry Policy grants registry-level access, but the CodeBuild role
-      // still needs IAM permissions to actually pull images from ghcr/* repos
-      assetPublishingCodeBuildDefaults: {
-        rolePolicy: [
-          new iam.PolicyStatement({
-            sid: 'ECRPullThroughCachePull',
-            effect: iam.Effect.ALLOW,
-            actions: [
-              'ecr:BatchGetImage',
-              'ecr:GetDownloadUrlForLayer',
-              'ecr:BatchCheckLayerAvailability',
-            ],
-            resources: [`arn:aws:ecr:${this.region}:${this.account}:repository/ghcr/*`],
-          }),
-        ],
       },
     });
 
