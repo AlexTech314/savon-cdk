@@ -1,5 +1,5 @@
 import React from 'react';
-import { Job } from '@/lib/types';
+import { Job, JobMetrics } from '@/lib/types';
 import {
   Table,
   TableBody,
@@ -11,9 +11,45 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
+
+// Calculate total processed/failed from all metrics
+function getMetricsSummary(metrics?: JobMetrics): { processed: number; failed: number } | null {
+  if (!metrics) return null;
+  
+  let processed = 0;
+  let failed = 0;
+  
+  if (metrics.search) {
+    processed += metrics.search.businesses_found;
+  }
+  if (metrics.details) {
+    processed += metrics.details.processed;
+    failed += metrics.details.failed;
+  }
+  if (metrics.scrape) {
+    processed += metrics.scrape.processed;
+    failed += metrics.scrape.failed;
+  }
+  if (metrics.enrich) {
+    processed += metrics.enrich.processed;
+    failed += metrics.enrich.failed;
+  }
+  if (metrics.photos) {
+    processed += metrics.photos.processed;
+    failed += metrics.photos.failed;
+  }
+  if (metrics.copy) {
+    processed += metrics.copy.processed;
+    failed += metrics.copy.failed;
+  }
+  
+  if (processed === 0 && failed === 0) return null;
+  
+  return { processed, failed };
+}
 
 interface JobsTableProps {
   jobs: Job[];
@@ -66,6 +102,7 @@ export const JobsTable: React.FC<JobsTableProps> = ({
               <TableHead>Job ID</TableHead>
               <TableHead>Campaign</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Results</TableHead>
               <TableHead>Started</TableHead>
               <TableHead>Duration</TableHead>
             </TableRow>
@@ -73,7 +110,7 @@ export const JobsTable: React.FC<JobsTableProps> = ({
           <TableBody>
             {Array.from({ length: 5 }).map((_, i) => (
               <TableRow key={i}>
-                {Array.from({ length: 5 }).map((_, j) => (
+                {Array.from({ length: 6 }).map((_, j) => (
                   <TableCell key={j}>
                     <Skeleton className="h-4 w-24" />
                   </TableCell>
@@ -106,6 +143,7 @@ export const JobsTable: React.FC<JobsTableProps> = ({
               <TableHead>Job ID</TableHead>
               <TableHead>Campaign</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Results</TableHead>
               <TableHead>Started</TableHead>
               <TableHead>Duration</TableHead>
             </TableRow>
@@ -113,6 +151,7 @@ export const JobsTable: React.FC<JobsTableProps> = ({
           <TableBody>
             {jobs.map((job) => {
               const config = statusConfig[job.status] || statusConfig.FAILED;
+              const metricsSummary = getMetricsSummary(job.metrics);
               
               return (
                 <TableRow
@@ -132,6 +171,24 @@ export const JobsTable: React.FC<JobsTableProps> = ({
                     <Badge className={cn('border', config.className)}>
                       {config.label}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
+                    {metricsSummary ? (
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="flex items-center gap-1 text-accent">
+                          <CheckCircle className="h-3 w-3" />
+                          {metricsSummary.processed}
+                        </span>
+                        {metricsSummary.failed > 0 && (
+                          <span className="flex items-center gap-1 text-destructive">
+                            <XCircle className="h-3 w-3" />
+                            {metricsSummary.failed}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {job.started_at
