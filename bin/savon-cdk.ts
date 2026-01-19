@@ -2,7 +2,6 @@
 import * as cdk from 'aws-cdk-lib';
 import { PipelineStack } from '../lib/pipeline-stack';
 import { DnsStack } from '../lib/stacks/dns-stack';
-import { EcrCacheStack } from '../lib/stacks/ecr-cache-stack';
 
 const app = new cdk.App();
 
@@ -25,25 +24,13 @@ const env = {
 new DnsStack(app, 'SavonDns', { env });
 
 // ============================================================
-// ECR Cache Stack - Deploy SECOND (before Pipeline)
-// ============================================================
-//
-// Sets up ECR pull-through cache for GitHub Container Registry.
-// Must be deployed before Pipeline so Docker builds can use cached images.
-//
-// Deploy with: cdk deploy SavonEcrCache
-//
-new EcrCacheStack(app, 'SavonEcrCache', { env });
-
-// ============================================================
-// Pipeline Stack - Deploy LAST after DNS and ECR Cache
+// Pipeline Stack - Deploy after DNS is configured
 // ============================================================
 //
 // Prerequisites:
 // 1. Create GitHub connection in AWS Console
 // 2. Set githubConnectionArn in cdk.context.json
 // 3. DNS must be configured and certificate issued
-// 4. ECR Cache must be deployed (for pull-through cache)
 //
 new PipelineStack(app, 'SavonPipeline', { env });
 

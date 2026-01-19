@@ -298,15 +298,8 @@ export class AppStack extends cdk.Stack {
       cpu: 1024,            // 1 vCPU (supports 2-8GB memory)
     });
 
-    // ECR registry for pull-through cache (must deploy SavonEcrCache first)
-    const ecrRegistry = `${this.account}.dkr.ecr.${this.region}.amazonaws.com`;
-
     scrapeTaskDef.addContainer('scrape', {
-      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/scrape-task'), {
-        buildArgs: {
-          ECR_REGISTRY: ecrRegistry,
-        },
-      }),
+      image: ecs.ContainerImage.fromAsset(path.join(__dirname, '../../src/pipeline/scrape-task')),
       logging: ecs.LogDrivers.awsLogs({ 
         streamPrefix: 'scrape',
         logRetention: logs.RetentionDays.ONE_WEEK,
