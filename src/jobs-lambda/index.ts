@@ -69,10 +69,13 @@ interface JobInput {
   runEnrich: boolean;
   runPhotos: boolean;
   runCopy: boolean;
+  runScrape: boolean;
   // Pipeline options
   skipWithWebsite?: boolean;
   // Filter rules - only process businesses matching ALL rules
   filterRules?: FilterRule[];
+  // Specific place IDs to process (optional - if provided, only these are processed)
+  placeIds?: string[];
   // Search cache options
   skipCachedSearches?: boolean; // Skip searches run in the last 30 days
 }
@@ -124,6 +127,17 @@ async function listJobs(
 ): Promise<APIGatewayProxyResultV2> {
   const limit = parseInt(queryParams?.limit || '20', 10);
   const status = queryParams?.status;
+  const nextToken = queryParams?.nextToken;
+  
+  // Parse pagination token if provided
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  if (nextToken) {
+    try {
+      exclusiveStartKey = JSON.parse(Buffer.from(nextToken, 'base64').toString('utf-8'));
+    } catch (e) {
+      console.warn('Invalid nextToken:', e);
+    }
+  }
   
   let command;
   
@@ -137,12 +151,19 @@ async function listJobs(
       ExpressionAttributeValues: { ':status': status },
       ScanIndexForward: false, // Newest first
       Limit: limit,
+      ExclusiveStartKey: exclusiveStartKey,
     });
   } else {
-    // Scan all jobs
-    command = new ScanCommand({
+    // Query all jobs using by-date GSI (most recent first)
+    command = new QueryCommand({
       TableName: JOBS_TABLE_NAME,
+      IndexName: 'by-date',
+      KeyConditionExpression: '#pk = :pk',
+      ExpressionAttributeNames: { '#pk': '_pk' },
+      ExpressionAttributeValues: { ':pk': 'JOB' },
+      ScanIndexForward: false, // Newest first
       Limit: limit,
+      ExclusiveStartKey: exclusiveStartKey,
     });
   }
   
@@ -163,10 +184,10 @@ async function listJobs(
             job.status = execution.status as Job['status'];
             job.completed_at = execution.stopDate?.toISOString();
             
-            // Update in DynamoDB
+            // Update in DynamoDB (include _pk for GSI)
             await docClient.send(new PutCommand({
               TableName: JOBS_TABLE_NAME,
-              Item: job,
+              Item: { ...job, _pk: 'JOB' },
             }));
           }
         } catch (e) {
@@ -177,12 +198,16 @@ async function listJobs(
     })
   );
   
-  // Sort by created_at descending
-  enrichedJobs.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  // Build next token if there are more results
+  let responseNextToken: string | undefined;
+  if (result.LastEvaluatedKey) {
+    responseNextToken = Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64');
+  }
   
   return response(200, {
     jobs: enrichedJobs,
     count: enrichedJobs.length,
+    nextToken: responseNextToken,
   });
 }
 
@@ -192,8 +217,10 @@ interface PipelineJobRequest {
   runEnrich: boolean;
   runPhotos: boolean;
   runCopy: boolean;
+  runScrape?: boolean;
   skipWithWebsite?: boolean;
   filterRules?: FilterRule[];
+  placeIds?: string[];
 }
 
 interface CampaignJobRequest {
@@ -224,13 +251,14 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
 }
 
 async function startPipelineJob(request: PipelineJobRequest): Promise<APIGatewayProxyResultV2> {
-  const { runDetails, runEnrich, runPhotos, runCopy, skipWithWebsite = true, filterRules = [] } = request;
+  const { runDetails, runEnrich, runPhotos, runCopy, runScrape = false, 
+          skipWithWebsite = true, filterRules = [], placeIds } = request;
   
   // At least one step must be selected
-  if (!runDetails && !runEnrich && !runPhotos && !runCopy) {
+  if (!runDetails && !runEnrich && !runPhotos && !runCopy && !runScrape) {
     return response(400, { 
       error: 'At least one pipeline step must be selected',
-      details: 'Select runDetails, runEnrich, runPhotos, or runCopy'
+      details: 'Select runDetails, runEnrich, runPhotos, runCopy, or runScrape'
     });
   }
   
@@ -242,8 +270,10 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
     runEnrich,
     runPhotos,
     runCopy,
+    runScrape,
     skipWithWebsite,
     filterRules: filterRules.length > 0 ? filterRules : undefined,
+    placeIds: placeIds?.length ? placeIds : undefined,
   };
   
   // Generate job ID and name
@@ -256,6 +286,7 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
   if (runEnrich) steps.push('Reviews');
   if (runPhotos) steps.push('Photos');
   if (runCopy) steps.push('Copy');
+  if (runScrape) steps.push('Scrape');
   const jobName = `Pipeline: ${steps.join(' → ')}`;
   
   // Start Step Functions execution
@@ -282,7 +313,7 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
   
   await docClient.send(new PutCommand({
     TableName: JOBS_TABLE_NAME,
-    Item: job,
+    Item: { ...job, _pk: 'JOB' },
   }));
   
   return response(201, {
@@ -337,6 +368,7 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
     runEnrich: false,
     runPhotos: false,
     runCopy: false,
+    runScrape: false,
     // Cache options
     skipCachedSearches,
   };
@@ -378,7 +410,7 @@ async function startCampaignJob(request: CampaignJobRequest): Promise<APIGateway
   
   await docClient.send(new PutCommand({
     TableName: JOBS_TABLE_NAME,
-    Item: job,
+    Item: { ...job, _pk: 'JOB' },
   }));
   
   // Update campaign's last_run_at
@@ -430,7 +462,7 @@ async function getJob(jobId: string): Promise<APIGatewayProxyResultV2> {
       if (execution.status !== job.status) {
         await docClient.send(new PutCommand({
           TableName: JOBS_TABLE_NAME,
-          Item: job,
+          Item: { ...job, _pk: 'JOB' },
         }));
       }
       

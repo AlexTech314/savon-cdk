@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getJobs } from '@/lib/api';
@@ -9,18 +9,43 @@ import { Button } from '@/components/ui/button';
 import { Megaphone } from 'lucide-react';
 
 const Jobs: React.FC = () => {
-  const [page, setPage] = useState(1);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [tokenHistory, setTokenHistory] = useState<(string | undefined)[]>([undefined]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  const currentToken = tokenHistory[currentIndex];
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['jobs', page],
-    queryFn: () => getJobs({ page, limit: 20 }),
+    queryKey: ['jobs', currentToken],
+    queryFn: () => getJobs({ limit: 20, nextToken: currentToken }),
     refetchInterval: (query) => {
-      const jobs = query.state.data?.data || [];
+      const jobs = query.state.data?.jobs || [];
       const hasRunning = jobs.some(j => j.status === 'RUNNING' || j.status === 'PENDING');
       return hasRunning ? 10000 : false;
     },
   });
+
+  const handleNextPage = useCallback(() => {
+    if (data?.nextToken) {
+      // If we're navigating forward and there's a next token
+      const nextIndex = currentIndex + 1;
+      if (nextIndex >= tokenHistory.length) {
+        // Add new token to history
+        setTokenHistory(prev => [...prev, data.nextToken]);
+      }
+      setCurrentIndex(nextIndex);
+    }
+  }, [data?.nextToken, currentIndex, tokenHistory.length]);
+
+  const handlePrevPage = useCallback(() => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+  }, [currentIndex]);
+
+  const currentPage = currentIndex + 1;
+  const hasNextPage = !!data?.nextToken;
+  const hasPrevPage = currentIndex > 0;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -38,11 +63,13 @@ const Jobs: React.FC = () => {
       </div>
 
       <JobsTable
-        jobs={data?.data ?? []}
+        jobs={data?.jobs ?? []}
         isLoading={isLoading || isFetching}
-        page={page}
-        totalPages={data?.totalPages ?? 1}
-        onPageChange={setPage}
+        currentPage={currentPage}
+        hasNextPage={hasNextPage}
+        hasPrevPage={hasPrevPage}
+        onNextPage={handleNextPage}
+        onPrevPage={handlePrevPage}
         onRowClick={setSelectedJob}
       />
 

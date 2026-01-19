@@ -86,6 +86,14 @@ export class StatefulStack extends cdk.Stack {
       sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
     });
 
+    // GSI for listing all jobs by date (most recent first)
+    // Uses a fixed partition key '_pk' = 'JOB' to enable efficient date-sorted queries
+    this.jobsTable.addGlobalSecondaryIndex({
+      indexName: 'by-date',
+      partitionKey: { name: '_pk', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
+    });
+
     // ============================================================
     // Campaigns Table
     // ============================================================

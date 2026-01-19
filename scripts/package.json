@@ -5,7 +5,9 @@
   "scripts": {
     "migrate": "ts-node migrate-campaigns-to-s3.ts",
     "backfill-gsi": "ts-node backfill-gsi-fields.ts",
-    "backfill-gsi:dry": "DRY_RUN=true ts-node backfill-gsi-fields.ts"
+    "backfill-gsi:dry": "DRY_RUN=true ts-node backfill-gsi-fields.ts",
+    "backfill-jobs-pk": "ts-node backfill-jobs-pk.ts",
+    "backfill-jobs-pk:dry": "DRY_RUN=true ts-node backfill-jobs-pk.ts"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",

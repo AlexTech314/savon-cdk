@@ -330,20 +330,31 @@ function transformJob(j: BackendJob): Job {
   };
 }
 
-export const getJobs = async (params: {
-  page?: number;
+export interface GetJobsParams {
   limit?: number;
   status?: Job['status'];
-}): Promise<PaginatedResponse<Job>> => {
-  const { page = 1, limit = 20, status } = params;
+  nextToken?: string;
+}
+
+export interface GetJobsResponse {
+  jobs: Job[];
+  count: number;
+  nextToken?: string;
+}
+
+export const getJobs = async (params: GetJobsParams = {}): Promise<GetJobsResponse> => {
+  const { limit = 20, status, nextToken } = params;
   
   const queryParams = new URLSearchParams();
   queryParams.set('limit', String(limit));
   if (status) {
     queryParams.set('status', status);
   }
+  if (nextToken) {
+    queryParams.set('nextToken', nextToken);
+  }
   
-  const response = await apiClient<{ jobs: BackendJob[]; count: number }>(
+  const response = await apiClient<{ jobs: BackendJob[]; count: number; nextToken?: string }>(
     `/jobs?${queryParams.toString()}`,
     { requiresAuth: true }
   );
@@ -351,11 +362,9 @@ export const getJobs = async (params: {
   const jobs = response.jobs.map(transformJob);
   
   return { 
-    data: jobs, 
-    total: response.count, 
-    page, 
-    limit, 
-    totalPages: Math.ceil(response.count / limit) 
+    jobs, 
+    count: response.count,
+    nextToken: response.nextToken,
   };
 };
 
@@ -412,6 +421,8 @@ export interface CountBusinessesRequest {
   runEnrich?: boolean;
   runPhotos?: boolean;
   runCopy?: boolean;
+  runScrape?: boolean;
+  placeIds?: string[];
 }
 
 export interface CountBusinessesResponse {
@@ -422,6 +433,7 @@ export interface CountBusinessesResponse {
     reviews: number;
     photos: number;
     copy: number;
+    scrape: number;
   };
   totalInDatabase: number;
   message: string;
@@ -445,8 +457,10 @@ export interface StartPipelineJobOptions {
   runEnrich: boolean;
   runPhotos: boolean;
   runCopy: boolean;
+  runScrape: boolean;
   skipWithWebsite?: boolean;
   filterRules?: PipelineFilterRule[];
+  placeIds?: string[];
 }
 
 /**

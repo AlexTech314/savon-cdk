@@ -716,11 +716,14 @@ interface CountRequest {
   runEnrich?: boolean;
   runPhotos?: boolean;
   runCopy?: boolean;
+  runScrape?: boolean;
+  // Specific place IDs to process (optional - if provided, only count these)
+  placeIds?: string[];
 }
 
 async function countBusinesses(body?: string): Promise<APIGatewayProxyResultV2> {
   const request: CountRequest = body ? JSON.parse(body) : {};
-  const { filterRules = [], skipWithWebsite = true, runDetails, runEnrich, runPhotos, runCopy } = request;
+  const { filterRules = [], skipWithWebsite = true, runDetails, runEnrich, runPhotos, runCopy, runScrape, placeIds } = request;
   
   // Scan all items and apply filters
   const items: Record<string, unknown>[] = [];
@@ -739,6 +742,13 @@ async function countBusinesses(body?: string): Promise<APIGatewayProxyResultV2> 
   
   // Apply filter rules
   let filtered = items;
+  
+  // If specific place IDs provided, filter to only those
+  if (placeIds?.length) {
+    filtered = filtered.filter(item => 
+      placeIds.includes(item.place_id as string)
+    );
+  }
   
   // Skip businesses with website if enabled
   if (skipWithWebsite) {
@@ -767,13 +777,14 @@ async function countBusinesses(body?: string): Promise<APIGatewayProxyResultV2> 
   
   // Further filter: skip businesses that have already completed all requested steps
   // (i.e., we only want to count businesses that will actually be processed)
-  if (runDetails || runEnrich || runPhotos || runCopy) {
+  if (runDetails || runEnrich || runPhotos || runCopy || runScrape) {
     filtered = filtered.filter(item => {
       // A business needs processing if at least one selected step hasn't been done yet
       if (runDetails && !item.details_fetched) return true;
       if (runEnrich && !item.reviews_fetched) return true;
       if (runPhotos && !item.photos_fetched) return true;
       if (runCopy && !item.copy_generated) return true;
+      if (runScrape && !item.web_scraped) return true;
       // All selected steps already done - skip this business
       return false;
     });
@@ -786,6 +797,7 @@ async function countBusinesses(body?: string): Promise<APIGatewayProxyResultV2> 
     reviews: runEnrich ? filtered.filter(b => !b.reviews_fetched).length : 0,
     photos: runPhotos ? filtered.filter(b => !b.photos_fetched).length : 0,
     copy: runCopy ? filtered.filter(b => !b.copy_generated).length : 0,
+    scrape: runScrape ? filtered.filter(b => !b.web_scraped).length : 0,
   };
   
   return response(200, {

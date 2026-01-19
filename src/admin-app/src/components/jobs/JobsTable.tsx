@@ -12,15 +12,17 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { formatDistanceToNow, format } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface JobsTableProps {
   jobs: Job[];
   isLoading: boolean;
-  page: number;
-  totalPages: number;
-  onPageChange: (page: number) => void;
+  currentPage: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+  onNextPage: () => void;
+  onPrevPage: () => void;
   onRowClick: (job: Job) => void;
 }
 
@@ -36,9 +38,11 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 export const JobsTable: React.FC<JobsTableProps> = ({
   jobs,
   isLoading,
-  page,
-  totalPages,
-  onPageChange,
+  currentPage,
+  hasNextPage,
+  hasPrevPage,
+  onNextPage,
+  onPrevPage,
   onRowClick,
 }) => {
   const getDuration = (job: Job): string => {
@@ -121,7 +125,7 @@ export const JobsTable: React.FC<JobsTableProps> = ({
                   </TableCell>
                   <TableCell>
                     <span className="font-medium">
-                      {job.campaign_name || 'Unknown Campaign'}
+                      {job.campaign_name || job.input?.jobType === 'pipeline' ? 'Pipeline Job' : 'Unknown Campaign'}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -147,22 +151,22 @@ export const JobsTable: React.FC<JobsTableProps> = ({
       {/* Pagination */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Page {page} of {totalPages}
+          Page {currentPage}
         </p>
         <div className="flex items-center gap-1">
           <Button
             variant="outline"
             size="icon"
-            onClick={() => onPageChange(page - 1)}
-            disabled={page === 1}
+            onClick={onPrevPage}
+            disabled={!hasPrevPage}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <Button
             variant="outline"
             size="icon"
-            onClick={() => onPageChange(page + 1)}
-            disabled={page === totalPages}
+            onClick={onNextPage}
+            disabled={!hasNextPage}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>

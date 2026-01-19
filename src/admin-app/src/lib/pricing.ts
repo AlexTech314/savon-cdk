@@ -96,6 +96,10 @@ export const PRICING = {
     
     // DynamoDB On-Demand - $0.125 per 1M read request units
     dynamoReadPer: 0.000000125,
+    
+    // Scrape task: 1 vCPU, 4GB memory, ~30s per business average
+    // Calculated: ($0.04048/vCPU-hr + $0.004445*4/GB-hr) * 30s/3600
+    scrapeUnitCost: 0.0005,
   },
   
   // Source documentation for all pricing
@@ -397,6 +401,7 @@ export interface PipelineStepConfig {
   runEnrich: boolean;  // Reviews
   runPhotos: boolean;
   runCopy: boolean;
+  runScrape: boolean;
 }
 
 /**
@@ -517,6 +522,22 @@ export function estimatePipelineJobCost(
     description: `~${PRICING.claude.avgInputTokens + PRICING.claude.avgOutputTokens} tokens per business`,
   });
   totalCost += copyTotalCost;
+  
+  // Scrape step (AWS Fargate)
+  const scrapeUnitCost = PRICING.aws.scrapeUnitCost;
+  const scrapeEnabled = steps.runScrape;
+  const scrapeTotalCost = scrapeEnabled ? businessCount * scrapeUnitCost : 0;
+  stepBreakdown.push({
+    step: 'Scrape',
+    enabled: scrapeEnabled,
+    unitCost: scrapeUnitCost,
+    totalCost: scrapeTotalCost,
+    unitCostFormatted: formatCost(scrapeUnitCost),
+    totalCostFormatted: formatCost(scrapeTotalCost),
+    apiProvider: 'AWS Fargate',
+    description: 'Web scraping for contacts, team, history',
+  });
+  totalCost += scrapeTotalCost;
   
   // Apply volume discount to Google API costs
   const googleCostBeforeDiscount = detailsTotalCost + reviewsTotalCost + photosTotalCost;

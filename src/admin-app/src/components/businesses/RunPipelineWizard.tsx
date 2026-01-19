@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -33,6 +34,7 @@ import {
   Info,
   AlertTriangle,
   Loader2,
+  Globe,
 } from 'lucide-react';
 import { 
   startPipelineJob, 
@@ -86,18 +88,55 @@ const PIPELINE_STEPS = [
     provider: 'Anthropic Claude',
     requires: ['details', 'enrich'],
   },
+  { 
+    id: 'scrape', 
+    label: 'Scrape', 
+    description: 'Scrape website for contacts, team, history, acquisition signals',
+    unitCost: PRICING.aws.scrapeUnitCost,
+    provider: 'AWS Fargate',
+    requires: [],
+  },
 ] as const;
 
 const FILTERABLE_FIELDS = [
+  // Basic fields
   { value: 'state', label: 'State' },
   { value: 'city', label: 'City' },
   { value: 'business_type', label: 'Business Type' },
+  
+  // Pipeline status
   { value: 'searched', label: 'Searched' },
   { value: 'details_fetched', label: 'Details Fetched' },
   { value: 'reviews_fetched', label: 'Reviews Fetched' },
   { value: 'photos_fetched', label: 'Photos Fetched' },
   { value: 'copy_generated', label: 'Copy Generated' },
   { value: 'has_website', label: 'Has Website' },
+  
+  // Web scrape status
+  { value: 'web_scraped', label: 'Web Scraped' },
+  { value: 'web_scrape_status', label: 'Scrape Status' },
+  
+  // Scraped contact fields
+  { value: 'web_emails', label: 'Scraped Emails' },
+  { value: 'web_phones', label: 'Scraped Phones' },
+  { value: 'web_contact_page', label: 'Contact Page URL' },
+  { value: 'web_social_linkedin', label: 'LinkedIn URL' },
+  { value: 'web_social_facebook', label: 'Facebook URL' },
+  { value: 'web_social_instagram', label: 'Instagram URL' },
+  { value: 'web_social_twitter', label: 'Twitter URL' },
+  
+  // Team/Employee fields
+  { value: 'web_has_team_page', label: 'Has Team Page' },
+  { value: 'web_team_count', label: 'Team Members Found' },
+  { value: 'web_headcount_estimate', label: 'Headcount Estimate' },
+  
+  // Acquisition/Ownership
+  { value: 'web_has_acquisition_signal', label: 'Has Acquisition Signal' },
+  { value: 'web_ownership_note', label: 'Ownership Note' },
+  
+  // Business History
+  { value: 'web_founded_year', label: 'Founded Year' },
+  { value: 'web_years_in_business', label: 'Years in Business' },
 ];
 
 const OPERATORS = [
@@ -123,6 +162,10 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
   
   // Step 2: Filter rules
   const [filterRules, setFilterRules] = useState<PipelineFilterRule[]>([]);
+  
+  // Step 2: Specific place IDs (optional)
+  const [placeIds, setPlaceIds] = useState<string[]>([]);
+  const [placeIdsInput, setPlaceIdsInput] = useState('');
   
   // Step 3: Options
   const [skipWithWebsite, setSkipWithWebsite] = useState(true);
@@ -174,6 +217,16 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
     return OPERATORS.find(o => o.value === operator)?.needsValue ?? false;
   };
 
+  // Parse place IDs from textarea (comma or newline separated)
+  const handlePlaceIdsChange = (value: string) => {
+    setPlaceIdsInput(value);
+    const ids = value
+      .split(/[,\n]/)
+      .map(id => id.trim())
+      .filter(id => id.length > 0);
+    setPlaceIds(ids);
+  };
+
   // Query to get accurate count based on filter rules
   const { data: countData, isLoading: isCountLoading, refetch: refetchCount } = useQuery({
     queryKey: [
@@ -181,6 +234,7 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
       Array.from(selectedSteps),
       filterRules,
       skipWithWebsite,
+      placeIds,
     ],
     queryFn: () => countBusinesses({
       filterRules: filterRules.length > 0 ? filterRules : undefined,
@@ -189,6 +243,8 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
       runEnrich: selectedSteps.has('enrich'),
       runPhotos: selectedSteps.has('photos'),
       runCopy: selectedSteps.has('copy'),
+      runScrape: selectedSteps.has('scrape'),
+      placeIds: placeIds.length > 0 ? placeIds : undefined,
     }),
     enabled: open && selectedSteps.size > 0,
     staleTime: 10000, // Cache for 10 seconds
@@ -202,12 +258,14 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
       reviews: totalBusinesses,
       photos: totalBusinesses,
       copy: totalBusinesses,
+      scrape: totalBusinesses,
     };
     
     const runDetails = selectedSteps.has('details');
     const runEnrich = selectedSteps.has('enrich');
     const runPhotos = selectedSteps.has('photos');
     const runCopy = selectedSteps.has('copy');
+    const runScrape = selectedSteps.has('scrape');
     
     // Calculate costs per step based on actual counts
     const detailsUnitCost = PRICING.google.placeDetails;
@@ -216,13 +274,15 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
     const copyInputCost = PRICING.claude.avgInputTokens * PRICING.claude.inputPerToken;
     const copyOutputCost = PRICING.claude.avgOutputTokens * PRICING.claude.outputPerToken;
     const copyUnitCost = copyInputCost + copyOutputCost;
+    const scrapeUnitCost = PRICING.aws.scrapeUnitCost;
     
     const detailsCost = runDetails ? stepCounts.details * detailsUnitCost : 0;
     const reviewsCost = runEnrich ? stepCounts.reviews * reviewsUnitCost : 0;
     const photosCost = runPhotos ? stepCounts.photos * photosUnitCost : 0;
     const copyCost = runCopy ? stepCounts.copy * copyUnitCost : 0;
+    const scrapeCost = runScrape ? stepCounts.scrape * scrapeUnitCost : 0;
     
-    const totalCost = detailsCost + reviewsCost + photosCost + copyCost;
+    const totalCost = detailsCost + reviewsCost + photosCost + copyCost + scrapeCost;
     const businessCount = countData?.count || totalBusinesses;
     const perBusinessCost = businessCount > 0 ? totalCost / businessCount : 0;
     
@@ -268,6 +328,16 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
         totalCostFormatted: formatCost(copyCost),
         apiProvider: 'Anthropic Claude',
       },
+      {
+        step: 'Scrape',
+        enabled: runScrape,
+        count: stepCounts.scrape,
+        unitCost: scrapeUnitCost,
+        totalCost: scrapeCost,
+        unitCostFormatted: formatCost(scrapeUnitCost),
+        totalCostFormatted: formatCost(scrapeCost),
+        apiProvider: 'AWS Fargate',
+      },
     ];
     
     // Generate warnings
@@ -311,8 +381,10 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
         runEnrich: selectedSteps.has('enrich'),
         runPhotos: selectedSteps.has('photos'),
         runCopy: selectedSteps.has('copy'),
+        runScrape: selectedSteps.has('scrape'),
         skipWithWebsite,
         filterRules: filterRules.length > 0 ? filterRules : undefined,
+        placeIds: placeIds.length > 0 ? placeIds : undefined,
       });
       
       toast({
@@ -342,6 +414,8 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
     setStep(1);
     setSelectedSteps(new Set());
     setFilterRules([]);
+    setPlaceIds([]);
+    setPlaceIdsInput('');
     setSkipWithWebsite(true);
     onClose();
   };
@@ -463,6 +537,27 @@ export const RunPipelineWizard: React.FC<RunPipelineWizardProps> = ({
           {/* Step 2: Filter Rules */}
           {step === 2 && (
             <div className="space-y-4">
+              {/* Specific Place IDs */}
+              <div className="space-y-2 pb-4 border-b border-border">
+                <Label className="text-base">Specific Place IDs (Optional)</Label>
+                <p className="text-sm text-muted-foreground">
+                  Run only on specific businesses. Enter place IDs separated by commas or newlines.
+                </p>
+                <Textarea
+                  placeholder="ChIJ1234..., ChIJ5678..."
+                  value={placeIdsInput}
+                  onChange={(e) => handlePlaceIdsChange(e.target.value)}
+                  rows={3}
+                  className="font-mono text-xs"
+                />
+                {placeIds.length > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    {placeIds.length} place ID(s) specified
+                  </Badge>
+                )}
+              </div>
+
+              {/* Filter Rules */}
               <div>
                 <Label className="text-base">Filter Rules (Optional)</Label>
                 <p className="text-sm text-muted-foreground">
