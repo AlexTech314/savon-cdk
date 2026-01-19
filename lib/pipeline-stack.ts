@@ -2,7 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as pipelines from 'aws-cdk-lib/pipelines';
 import * as codebuild from 'aws-cdk-lib/aws-codebuild';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import { AlphaStage } from './stages/alpha-stage';
 
 export class PipelineStack extends cdk.Stack {
@@ -88,23 +87,6 @@ export class PipelineStack extends cdk.Stack {
             },
           },
         }),
-      },
-
-      // Add permissions for ECR pull-through cache to asset publishing role
-      // This allows CodeBuild to pull base images from ghcr/* repos
-      assetPublishingCodeBuildDefaults: {
-        rolePolicy: [
-          new iam.PolicyStatement({
-            sid: 'ECRPullThroughCachePull',
-            effect: iam.Effect.ALLOW,
-            actions: [
-              'ecr:BatchGetImage',
-              'ecr:GetDownloadUrlForLayer',
-              'ecr:BatchCheckLayerAvailability',
-            ],
-            resources: [`arn:aws:ecr:${this.region}:${this.account}:repository/ghcr/*`],
-          }),
-        ],
       },
     });
 
