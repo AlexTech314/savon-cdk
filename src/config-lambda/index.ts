@@ -289,50 +289,81 @@ async function listBusinesses(
   }
 
   // GSI PATH: Use GSI for single structured filter (no free text search)
+  // Uses native DynamoDB pagination for efficiency
   if (hasStructuredFilters && !searchTerm) {
     // Priority: pipeline_status > has_website > state > business_type
-    // Pick the most selective GSI and filter the rest in memory
+    // Pick the most selective GSI and use native pagination
+    
+    let gsiResult: PaginatedGSIResult | null = null;
+    let needsSecondaryFilter = false;
     
     if (pipelineStatusFilter) {
       // Map UI filter values to actual pipeline_status values
       const statusValue = pipelineStatusFilter === 'copy' ? 'complete' : pipelineStatusFilter;
-      items = await queryGSI('by-pipeline-status', 'pipeline_status', statusValue);
+      gsiResult = await queryGSIPaginated('by-pipeline-status', 'pipeline_status', statusValue, page, limit);
+      // Check if we also need to filter by other criteria
+      needsSecondaryFilter = !!(businessTypeFilter || stateFilter || hasWebsiteFilter);
     } else if (hasWebsiteFilter !== undefined) {
-      items = await queryGSI('by-has-website', 'has_website_str', hasWebsiteFilter);
+      gsiResult = await queryGSIPaginated('by-has-website', 'has_website_str', hasWebsiteFilter, page, limit);
+      needsSecondaryFilter = !!(businessTypeFilter || stateFilter);
     } else if (stateFilter) {
       // State could be stored as "California" or "CA" - query as provided
-      items = await queryGSI('by-state', 'state', stateFilter);
+      gsiResult = await queryGSIPaginated('by-state', 'state', stateFilter, page, limit);
+      needsSecondaryFilter = !!businessTypeFilter;
     } else if (businessTypeFilter) {
       // by-type-state GSI has business_type as partition key
-      items = await queryGSI('by-type-state', 'business_type', businessTypeFilter.toLowerCase());
-    }
-
-    // Apply any remaining filters in memory
-    if (businessTypeFilter && !items[0]?.business_type?.toString().toLowerCase().includes(businessTypeFilter.toLowerCase())) {
-      items = items.filter(item => 
-        String(item.business_type || '').toLowerCase() === businessTypeFilter.toLowerCase()
-      );
-    }
-    if (stateFilter && pipelineStatusFilter) {
-      items = items.filter(item => 
-        String(item.state || '').toUpperCase() === stateFilter.toUpperCase()
-      );
-    }
-    if (hasWebsiteFilter !== undefined && pipelineStatusFilter) {
-      const hasWebsite = hasWebsiteFilter === 'true';
-      items = items.filter(item => hasWebsite ? item.has_website : !item.has_website);
+      gsiResult = await queryGSIPaginated('by-type-state', 'business_type', businessTypeFilter.toLowerCase(), page, limit);
     }
     
-    totalCount = items.length;
-    const offset = (page - 1) * limit;
-    const paginatedItems = items.slice(offset, offset + limit);
+    if (gsiResult) {
+      items = gsiResult.items;
+      totalCount = gsiResult.totalCount;
+      
+      // If we need secondary filters, we have to fall back to loading all and filtering
+      // This is only for complex multi-filter cases
+      if (needsSecondaryFilter) {
+        // For multi-filter, we need the old approach (load all from primary GSI, filter in memory)
+        // This is still faster than a full table scan
+        let allItems: Record<string, unknown>[];
+        
+        if (pipelineStatusFilter) {
+          const statusValue = pipelineStatusFilter === 'copy' ? 'complete' : pipelineStatusFilter;
+          allItems = await queryGSI('by-pipeline-status', 'pipeline_status', statusValue);
+        } else if (hasWebsiteFilter !== undefined) {
+          allItems = await queryGSI('by-has-website', 'has_website_str', hasWebsiteFilter);
+        } else {
+          allItems = await queryGSI('by-state', 'state', stateFilter!);
+        }
+        
+        // Apply secondary filters
+        if (businessTypeFilter) {
+          allItems = allItems.filter(item => 
+            String(item.business_type || '').toLowerCase() === businessTypeFilter.toLowerCase()
+          );
+        }
+        if (stateFilter && pipelineStatusFilter) {
+          allItems = allItems.filter(item => 
+            String(item.state || '').toUpperCase() === stateFilter.toUpperCase()
+          );
+        }
+        if (hasWebsiteFilter !== undefined && pipelineStatusFilter) {
+          const hasWebsite = hasWebsiteFilter === 'true';
+          allItems = allItems.filter(item => hasWebsite ? item.has_website : !item.has_website);
+        }
+        
+        totalCount = allItems.length;
+        const offset = (page - 1) * limit;
+        items = allItems.slice(offset, offset + limit);
+      }
 
-    return response(200, {
-      items: paginatedItems,
-      count: totalCount,
-      page,
-      limit,
-    });
+      return response(200, {
+        items,
+        count: totalCount,
+        countIsApproximate: gsiResult.countIsApproximate,
+        page,
+        limit,
+      });
+    }
   }
 
   // SLOW PATH: Free text search requires full table scan
@@ -398,6 +429,71 @@ async function listBusinesses(
 /**
  * Query a GSI and return all matching items
  */
+interface PaginatedGSIResult {
+  items: Record<string, unknown>[];
+  totalCount: number;
+  countIsApproximate: boolean;
+}
+
+async function queryGSIPaginated(
+  indexName: string, 
+  partitionKeyName: string, 
+  partitionKeyValue: string,
+  page: number,
+  limit: number
+): Promise<PaginatedGSIResult> {
+  const offset = (page - 1) * limit;
+  let lastKey: Record<string, unknown> | undefined;
+  let scannedCount = 0;
+  
+  // Skip to the page we need
+  while (scannedCount < offset) {
+    const skipCommand = new QueryCommand({
+      TableName: TABLE_NAME,
+      IndexName: indexName,
+      KeyConditionExpression: '#pk = :pkVal',
+      ExpressionAttributeNames: { '#pk': partitionKeyName },
+      ExpressionAttributeValues: { ':pkVal': partitionKeyValue },
+      Limit: Math.min(1000, offset - scannedCount),
+      ExclusiveStartKey: lastKey,
+    });
+    const result = await docClient.send(skipCommand);
+    scannedCount += result.Items?.length || 0;
+    lastKey = result.LastEvaluatedKey;
+    if (!lastKey) break;
+  }
+
+  // Get the page we want
+  const command = new QueryCommand({
+    TableName: TABLE_NAME,
+    IndexName: indexName,
+    KeyConditionExpression: '#pk = :pkVal',
+    ExpressionAttributeNames: { '#pk': partitionKeyName },
+    ExpressionAttributeValues: { ':pkVal': partitionKeyValue },
+    Limit: limit,
+    ExclusiveStartKey: lastKey,
+  });
+  const result = await docClient.send(command);
+  const items = result.Items || [];
+  
+  // For count, we can do a quick count query or estimate
+  // Use scannedCount + current items + estimate if there's more
+  let totalCount = scannedCount + items.length;
+  let countIsApproximate = false;
+  
+  if (result.LastEvaluatedKey) {
+    // There are more items - we don't know exactly how many
+    // Return a high estimate so pagination shows "more pages available"
+    countIsApproximate = true;
+    // Estimate: if we got here via offset, there's likely many more
+    // Use a large estimate so the UI shows pagination
+    totalCount = Math.max(totalCount * 10, 10000);
+  }
+
+  return { items, totalCount, countIsApproximate };
+}
+
+// Legacy function for cases where we need all items
 async function queryGSI(
   indexName: string, 
   partitionKeyName: string, 
