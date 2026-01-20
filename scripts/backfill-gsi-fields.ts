@@ -4,6 +4,7 @@
  * Adds denormalized GSI fields to existing records:
  * - pipeline_status: 'searched' | 'details' | 'reviews' | 'photos' | 'complete'
  * - has_website_str: 'true' | 'false'
+ * - web_scraped_str: 'true' | 'false'
  * 
  * Usage:
  *   cd scripts
@@ -37,8 +38,10 @@ interface BusinessRecord {
   photos_fetched?: boolean;
   copy_generated?: boolean;
   has_website?: boolean;
+  web_scraped?: boolean;
   pipeline_status?: string;
   has_website_str?: string;
+  web_scraped_str?: string;
 }
 
 /**
@@ -60,6 +63,17 @@ function computeHasWebsiteStr(record: BusinessRecord): string | undefined {
   // Only set if details have been fetched (otherwise we don't know)
   if (record.details_fetched) {
     return record.has_website ? 'true' : 'false';
+  }
+  return undefined;
+}
+
+/**
+ * Determine web_scraped_str
+ */
+function computeWebScrapedStr(record: BusinessRecord): string | undefined {
+  // Only set if the field exists (we know the scrape status)
+  if (record.web_scraped !== undefined) {
+    return record.web_scraped ? 'true' : 'false';
   }
   return undefined;
 }
@@ -141,6 +155,12 @@ async function main() {
     const computedHasWebsite = computeHasWebsiteStr(record);
     if (computedHasWebsite !== undefined && record.has_website_str !== computedHasWebsite) {
       updates.has_website_str = computedHasWebsite;
+    }
+
+    // Check if web_scraped_str needs to be set
+    const computedWebScraped = computeWebScrapedStr(record);
+    if (computedWebScraped !== undefined && record.web_scraped_str !== computedWebScraped) {
+      updates.web_scraped_str = computedWebScraped;
     }
 
     if (Object.keys(updates).length > 0) {
