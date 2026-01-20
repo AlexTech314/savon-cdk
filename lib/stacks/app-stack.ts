@@ -508,16 +508,16 @@ export class AppStack extends cdk.Stack {
     });
 
     // Step 2: Distributed Map - Process batches in parallel
+    // Each item in the manifest is a BatchReference with batchS3Key pointing to the actual items
     const distributedScrape = new sfn.DistributedMap(this, 'DistributedScrape', {
       maxConcurrency: 30, // Limited by Fargate vCPU quota
-      mapExecutionType: sfn.StateMachineType.STANDARD, // Use mapExecutionType instead of ProcessorConfig
+      mapExecutionType: sfn.StateMachineType.STANDARD,
       itemReader: new sfn.S3JsonItemReader({
         bucketNamePath: sfn.JsonPath.stringAt('$.prepareResult.Payload.bucket'),
-        key: sfn.JsonPath.stringAt('$.prepareResult.Payload.itemsS3Key'),
+        key: sfn.JsonPath.stringAt('$.prepareResult.Payload.manifestS3Key'),
       }),
-      itemBatcher: new sfn.ItemBatcher({
-        maxItemsPerBatch: 250, // Step Functions auto-batches for us
-      }),
+      // No ItemBatcher - prepare-scrape-lambda already created batch files
+      // Each item is a small BatchReference object (~100 bytes) pointing to S3
       resultWriterV2: new sfn.ResultWriterV2({
         bucket: campaignDataBucket,
         prefix: 'jobs/scrape-results/',

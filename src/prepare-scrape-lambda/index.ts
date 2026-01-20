@@ -29,10 +29,18 @@ interface PrepareInput {
   forceRescrape?: boolean;
 }
 
+interface BatchReference {
+  batchS3Key: string;
+  batchIndex: number;
+  itemCount: number;
+  jobId: string;
+}
+
 interface PrepareOutput {
   bucket: string;
-  itemsS3Key: string;
+  manifestS3Key: string;
   totalBusinesses: number;
+  totalBatches: number;
   jobId: string;
 }
 
@@ -44,6 +52,9 @@ interface Business {
 }
 
 // ============ Handler ============
+
+// Batch size - 250 items per batch keeps payloads small while minimizing ECS task count
+const BATCH_SIZE = 250;
 
 export async function handler(event: PrepareInput): Promise<PrepareOutput> {
   console.log('PrepareScrape input:', JSON.stringify(event, null, 2));
@@ -59,22 +70,82 @@ export async function handler(event: PrepareInput): Promise<PrepareOutput> {
   
   console.log(`Found ${businessPlaceIds.length} businesses to scrape`);
   
-  // Write placeIds array to S3
-  const itemsS3Key = `jobs/${jobId}/scrape-items.json`;
+  if (businessPlaceIds.length === 0) {
+    // Write empty manifest
+    const manifestS3Key = `jobs/${jobId}/batch-manifest.json`;
+    await s3Client.send(new PutObjectCommand({
+      Bucket: CAMPAIGN_DATA_BUCKET,
+      Key: manifestS3Key,
+      Body: JSON.stringify([]),
+      ContentType: 'application/json',
+    }));
+    
+    return {
+      bucket: CAMPAIGN_DATA_BUCKET,
+      manifestS3Key,
+      totalBusinesses: 0,
+      totalBatches: 0,
+      jobId,
+    };
+  }
   
+  // Split into batches and write each batch to S3
+  const batchReferences: BatchReference[] = [];
+  const totalBatches = Math.ceil(businessPlaceIds.length / BATCH_SIZE);
+  
+  console.log(`Splitting into ${totalBatches} batches of up to ${BATCH_SIZE} items each`);
+  
+  // Write batch files in parallel (with concurrency limit)
+  const WRITE_CONCURRENCY = 10;
+  for (let i = 0; i < totalBatches; i += WRITE_CONCURRENCY) {
+    const batchPromises = [];
+    
+    for (let j = i; j < Math.min(i + WRITE_CONCURRENCY, totalBatches); j++) {
+      const startIdx = j * BATCH_SIZE;
+      const endIdx = Math.min(startIdx + BATCH_SIZE, businessPlaceIds.length);
+      const batchItems = businessPlaceIds.slice(startIdx, endIdx);
+      
+      const batchS3Key = `jobs/${jobId}/batches/batch-${String(j).padStart(4, '0')}.json`;
+      
+      batchPromises.push(
+        s3Client.send(new PutObjectCommand({
+          Bucket: CAMPAIGN_DATA_BUCKET,
+          Key: batchS3Key,
+          Body: JSON.stringify(batchItems),
+          ContentType: 'application/json',
+        })).then(() => {
+          batchReferences.push({
+            batchS3Key,
+            batchIndex: j,
+            itemCount: batchItems.length,
+            jobId,
+          });
+        })
+      );
+    }
+    
+    await Promise.all(batchPromises);
+  }
+  
+  // Sort batch references by index (since parallel writes may complete out of order)
+  batchReferences.sort((a, b) => a.batchIndex - b.batchIndex);
+  
+  // Write manifest file with all batch references
+  const manifestS3Key = `jobs/${jobId}/batch-manifest.json`;
   await s3Client.send(new PutObjectCommand({
     Bucket: CAMPAIGN_DATA_BUCKET,
-    Key: itemsS3Key,
-    Body: JSON.stringify(businessPlaceIds),
+    Key: manifestS3Key,
+    Body: JSON.stringify(batchReferences),
     ContentType: 'application/json',
   }));
   
-  console.log(`Wrote ${businessPlaceIds.length} placeIds to s3://${CAMPAIGN_DATA_BUCKET}/${itemsS3Key}`);
+  console.log(`Wrote ${totalBatches} batch files and manifest to s3://${CAMPAIGN_DATA_BUCKET}/${manifestS3Key}`);
   
   return {
     bucket: CAMPAIGN_DATA_BUCKET,
-    itemsS3Key,
+    manifestS3Key,
     totalBusinesses: businessPlaceIds.length,
+    totalBatches,
     jobId,
   };
 }

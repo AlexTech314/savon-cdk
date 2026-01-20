@@ -1,4 +1,5 @@
 import puppeteer, { Browser } from 'puppeteer';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 
 import type { JobInput, RawScrapeData, ExtractedScrapeData, ScrapeMetrics } from './types.js';
 import {
@@ -7,6 +8,7 @@ import {
   TASK_MEMORY_MIB,
   TASK_CPU_UNITS,
   calculateOptimalConcurrency,
+  s3Client,
 } from './config.js';
 import { 
   scrapeWebsite, 
@@ -51,16 +53,37 @@ async function main(): Promise<void> {
   const skipIfDone = jobInput.skipIfDone !== false;
   const forceRescrape = jobInput.forceRescrape || false;
   const filterRules = jobInput.filterRules || [];
-  // Support both direct placeIds array and Items array from Step Functions ItemBatcher
-  const placeIds = jobInput.Items || jobInput.placeIds;
-  // Default to fastMode in distributed mode (when Items is present)
-  const fastMode = jobInput.fastMode ?? (jobInput.Items !== undefined);
   const enableEarlyExit = true; // Always enable early exit for efficiency
   
-  // Log batch info if running in distributed mode
-  if (jobInput.Items) {
-    console.log(`=== Distributed Mode: Processing batch of ${jobInput.Items.length} businesses ===`);
+  // Distributed mode: read placeIds from S3 batch file to avoid container override size limits
+  let placeIds: string[] | undefined = jobInput.placeIds;
+  let isDistributedMode = false;
+  
+  if (jobInput.batchS3Key) {
+    isDistributedMode = true;
+    console.log(`=== Distributed Mode: Reading batch from s3://${CAMPAIGN_DATA_BUCKET}/${jobInput.batchS3Key} ===`);
+    
+    try {
+      const response = await s3Client.send(new GetObjectCommand({
+        Bucket: CAMPAIGN_DATA_BUCKET,
+        Key: jobInput.batchS3Key,
+      }));
+      
+      const bodyString = await response.Body?.transformToString();
+      if (!bodyString) {
+        throw new Error('Empty response from S3');
+      }
+      
+      placeIds = JSON.parse(bodyString) as string[];
+      console.log(`Loaded ${placeIds.length} placeIds from batch ${jobInput.batchIndex ?? 'unknown'}`);
+    } catch (error) {
+      console.error(`Failed to read batch from S3:`, error);
+      throw error;
+    }
   }
+  
+  // Default to fastMode in distributed mode
+  const fastMode = jobInput.fastMode ?? isDistributedMode;
   
   // Calculate optimal concurrency based on task resources
   const calculatedConcurrency = calculateOptimalConcurrency(fastMode);

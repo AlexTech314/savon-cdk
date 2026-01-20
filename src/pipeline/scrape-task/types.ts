@@ -19,8 +19,9 @@ export interface JobInput {
   placeIds?: string[];
   // Speed optimization options
   fastMode?: boolean; // Skip Puppeteer fallback entirely for max speed
-  // ItemBatcher support (from Step Functions Distributed Map)
-  Items?: string[]; // Array of placeIds from ItemBatcher
+  // Distributed Map batch reference (items stored in S3 to avoid container override size limits)
+  batchS3Key?: string; // S3 key to read placeIds from
+  batchIndex?: number; // Batch number for logging
 }
 
 // ============ Business Types ============
