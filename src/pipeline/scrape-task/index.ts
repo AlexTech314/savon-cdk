@@ -51,9 +51,16 @@ async function main(): Promise<void> {
   const skipIfDone = jobInput.skipIfDone !== false;
   const forceRescrape = jobInput.forceRescrape || false;
   const filterRules = jobInput.filterRules || [];
-  const placeIds = jobInput.placeIds;
-  const fastMode = jobInput.fastMode || false;
+  // Support both direct placeIds array and Items array from Step Functions ItemBatcher
+  const placeIds = jobInput.Items || jobInput.placeIds;
+  // Default to fastMode in distributed mode (when Items is present)
+  const fastMode = jobInput.fastMode ?? (jobInput.Items !== undefined);
   const enableEarlyExit = true; // Always enable early exit for efficiency
+  
+  // Log batch info if running in distributed mode
+  if (jobInput.Items) {
+    console.log(`=== Distributed Mode: Processing batch of ${jobInput.Items.length} businesses ===`);
+  }
   
   // Calculate optimal concurrency based on task resources
   const calculatedConcurrency = calculateOptimalConcurrency(fastMode);
@@ -301,19 +308,25 @@ async function main(): Promise<void> {
     }
   }
   
-  // Update job metrics
+  // Build metrics object
+  const metrics: ScrapeMetrics = {
+    processed,
+    failed,
+    filtered: 0,
+    cloudscraper_count: cloudscraperCount,
+    puppeteer_count: puppeteerCount,
+    total_pages: totalPages,
+    total_bytes: totalBytes,
+  };
+  
+  // Update job metrics (for single-task mode)
   if (jobId) {
-    const metrics: ScrapeMetrics = {
-      processed,
-      failed,
-      filtered: 0,
-      cloudscraper_count: cloudscraperCount,
-      puppeteer_count: puppeteerCount,
-      total_pages: totalPages,
-      total_bytes: totalBytes,
-    };
     await updateJobMetrics(jobId, metrics);
   }
+  
+  // Output metrics for Step Functions aggregation (distributed mode)
+  // This format is parsed by the aggregate-scrape-lambda
+  console.log(`SCRAPE_RESULT:${JSON.stringify(metrics)}`);
 }
 
 main().catch(error => {

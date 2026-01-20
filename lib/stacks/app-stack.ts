@@ -346,6 +346,51 @@ export class AppStack extends cdk.Stack {
     jobsTable.grantWriteData(scrapeTaskDef.taskRole);
 
     // ============================================================
+    // Distributed Scrape Lambdas (Prepare and Aggregate)
+    // ============================================================
+    const prepareScrapeLogGroup = new logs.LogGroup(this, 'PrepareScrapeLambdaLogs', {
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const prepareScrapeFunction = new lambda.DockerImageFunction(this, 'PrepareScrapeLambda', {
+      code: lambda.DockerImageCode.fromImageAsset(
+        path.join(__dirname, '../../src/prepare-scrape-lambda')
+      ),
+      timeout: cdk.Duration.minutes(5), // May take time to scan large tables
+      memorySize: 512,
+      logGroup: prepareScrapeLogGroup,
+      environment: {
+        BUSINESSES_TABLE_NAME: businessesTable.tableName,
+        CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
+      },
+    });
+
+    businessesTable.grantReadData(prepareScrapeFunction);
+    campaignDataBucket.grantWrite(prepareScrapeFunction);
+
+    const aggregateScrapeLogGroup = new logs.LogGroup(this, 'AggregateScrapeLambdaLogs', {
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const aggregateScrapeFunction = new lambda.DockerImageFunction(this, 'AggregateScrapeLambda', {
+      code: lambda.DockerImageCode.fromImageAsset(
+        path.join(__dirname, '../../src/aggregate-scrape-lambda')
+      ),
+      timeout: cdk.Duration.minutes(5), // May take time to read many result files
+      memorySize: 512,
+      logGroup: aggregateScrapeLogGroup,
+      environment: {
+        JOBS_TABLE_NAME: jobsTable.tableName,
+        CAMPAIGN_DATA_BUCKET: campaignDataBucket.bucketName,
+      },
+    });
+
+    jobsTable.grantWriteData(aggregateScrapeFunction);
+    campaignDataBucket.grantRead(aggregateScrapeFunction);
+
+    // ============================================================
     // Step Functions State Machine (Task Flag Pattern)
     // ============================================================
     
@@ -435,6 +480,7 @@ export class AppStack extends cdk.Stack {
       resultPath: '$.copyResult',
     });
 
+    // Single scrape task (used by Distributed Map for each batch)
     const runScrapeTask = new tasks.EcsRunTask(this, 'RunScrapeTask', {
       integrationPattern: sfn.IntegrationPattern.RUN_JOB,
       cluster,
@@ -449,8 +495,49 @@ export class AppStack extends cdk.Stack {
         ],
       }],
       assignPublicIp: true,
+    });
+
+    // ============================================================
+    // Distributed Scrape Workflow (Prepare -> DistributedMap -> Aggregate)
+    // ============================================================
+    
+    // Step 1: Prepare - Query businesses and write placeIds to S3
+    const prepareScrape = new tasks.LambdaInvoke(this, 'PrepareScrape', {
+      lambdaFunction: prepareScrapeFunction,
+      resultPath: '$.prepareResult',
+    });
+
+    // Step 2: Distributed Map - Process batches in parallel
+    const distributedScrape = new sfn.DistributedMap(this, 'DistributedScrape', {
+      maxConcurrency: 30, // Limited by Fargate vCPU quota
+      mapExecutionType: sfn.StateMachineType.STANDARD, // Use mapExecutionType instead of ProcessorConfig
+      itemReader: new sfn.S3JsonItemReader({
+        bucketNamePath: sfn.JsonPath.stringAt('$.prepareResult.Payload.bucket'),
+        key: sfn.JsonPath.stringAt('$.prepareResult.Payload.itemsS3Key'),
+      }),
+      itemBatcher: new sfn.ItemBatcher({
+        maxItemsPerBatch: 250, // Step Functions auto-batches for us
+      }),
+      resultWriterV2: new sfn.ResultWriterV2({
+        bucket: campaignDataBucket,
+        prefix: 'jobs/scrape-results/',
+      }),
+      toleratedFailurePercentage: 10, // Allow some failures without failing entire job
+    });
+
+    // Each child execution runs the ECS scrape task
+    distributedScrape.itemProcessor(runScrapeTask);
+
+    // Step 3: Aggregate - Combine metrics from all batches
+    const aggregateScrape = new tasks.LambdaInvoke(this, 'AggregateScrape', {
+      lambdaFunction: aggregateScrapeFunction,
       resultPath: '$.scrapeResult',
     });
+
+    // Chain: Prepare -> Distributed Map -> Aggregate
+    const distributedScrapeWorkflow = prepareScrape
+      .next(distributedScrape)
+      .next(aggregateScrape);
 
     // End state
     const pipelineComplete = new sfn.Succeed(this, 'PipelineComplete');
@@ -472,7 +559,7 @@ export class AppStack extends cdk.Stack {
       .otherwise(checkPhotos);
 
     const checkScrape = new sfn.Choice(this, 'CheckRunScrape')
-      .when(sfn.Condition.booleanEquals('$.runScrape', true), runScrapeTask.next(checkEnrich))
+      .when(sfn.Condition.booleanEquals('$.runScrape', true), distributedScrapeWorkflow.next(checkEnrich))
       .otherwise(checkEnrich);
 
     const checkDetails = new sfn.Choice(this, 'CheckRunDetails')

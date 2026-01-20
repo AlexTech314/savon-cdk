@@ -19,6 +19,8 @@ export interface JobInput {
   placeIds?: string[];
   // Speed optimization options
   fastMode?: boolean; // Skip Puppeteer fallback entirely for max speed
+  // ItemBatcher support (from Step Functions Distributed Map)
+  Items?: string[]; // Array of placeIds from ItemBatcher
 }
 
 // ============ Business Types ============

@@ -74,6 +74,8 @@ interface JobInput {
   runScrape: boolean;
   // Scrape options
   forceRescrape?: boolean; // Re-scrape even if already scraped
+  fastMode?: boolean; // Skip Puppeteer for faster scraping
+  maxConcurrency?: number; // Max parallel ECS tasks for distributed scrape
   // Filter rules - only process businesses matching ALL rules
   filterRules?: FilterRule[];
   // Specific place IDs to process (optional - if provided, only these are processed)
@@ -265,6 +267,9 @@ interface PipelineJobRequest {
   forceRescrape?: boolean; // Re-scrape even if already scraped
   filterRules?: FilterRule[];
   placeIds?: string[];
+  // Distributed scrape options
+  fastMode?: boolean; // Skip Puppeteer for faster scraping (default true in distributed mode)
+  maxConcurrency?: number; // Max parallel ECS tasks for distributed scrape (default 30)
 }
 
 interface CampaignJobRequest {
@@ -296,7 +301,8 @@ async function startJob(body?: string): Promise<APIGatewayProxyResultV2> {
 
 async function startPipelineJob(request: PipelineJobRequest): Promise<APIGatewayProxyResultV2> {
   const { runDetails, runEnrich, runPhotos, runCopy, runScrape = false, 
-          forceRescrape = false, filterRules = [], placeIds } = request;
+          forceRescrape = false, filterRules = [], placeIds,
+          fastMode, maxConcurrency } = request;
   
   // At least one step must be selected
   if (!runDetails && !runEnrich && !runPhotos && !runCopy && !runScrape) {
@@ -320,6 +326,8 @@ async function startPipelineJob(request: PipelineJobRequest): Promise<APIGateway
     runCopy,
     runScrape,
     forceRescrape: forceRescrape || undefined, // Only include if true
+    fastMode: fastMode !== undefined ? fastMode : undefined, // Pass through if specified
+    maxConcurrency: maxConcurrency !== undefined ? maxConcurrency : undefined, // Pass through if specified
     filterRules: filterRules.length > 0 ? filterRules : undefined,
     placeIds: placeIds?.length ? placeIds : undefined,
   };
