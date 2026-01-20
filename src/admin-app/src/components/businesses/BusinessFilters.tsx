@@ -25,7 +25,13 @@ const pipelineStatuses: { value: PipelineStatus; label: string }[] = [
   { value: 'details', label: 'Has Details (needs reviews)' },
   { value: 'reviews', label: 'Has Reviews (needs copy)' },
   { value: 'complete', label: 'Complete' },
-  { value: 'has_website', label: 'Has Website' },
+];
+
+const booleanFilters: { value: string; label: string; field: 'has_website' | 'web_scraped' }[] = [
+  { value: 'has_website_true', label: 'Has Website', field: 'has_website' },
+  { value: 'has_website_false', label: 'No Website', field: 'has_website' },
+  { value: 'web_scraped_true', label: 'Scraped', field: 'web_scraped' },
+  { value: 'web_scraped_false', label: 'Not Scraped', field: 'web_scraped' },
 ];
 
 export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> = ({
@@ -41,7 +47,33 @@ export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> =
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  const hasActiveFilters = search || filters.business_type || filters.state || filters.has_copy !== undefined || filters.pipeline_status;
+  const hasActiveFilters = search || filters.business_type || filters.state || filters.has_copy !== undefined || filters.pipeline_status || filters.has_website !== undefined || filters.web_scraped !== undefined;
+  
+  // Get current boolean filter value for the select
+  const getBooleanFilterValue = () => {
+    if (filters.has_website === true) return 'has_website_true';
+    if (filters.has_website === false) return 'has_website_false';
+    if (filters.web_scraped === true) return 'web_scraped_true';
+    if (filters.web_scraped === false) return 'web_scraped_false';
+    return 'all';
+  };
+  
+  const handleBooleanFilterChange = (value: string) => {
+    // Clear both filters first
+    const newFilters = { ...filters, has_website: undefined, web_scraped: undefined };
+    
+    if (value === 'has_website_true') {
+      newFilters.has_website = true;
+    } else if (value === 'has_website_false') {
+      newFilters.has_website = false;
+    } else if (value === 'web_scraped_true') {
+      newFilters.web_scraped = true;
+    } else if (value === 'web_scraped_false') {
+      newFilters.web_scraped = false;
+    }
+    
+    onFiltersChange(newFilters);
+  };
 
   const clearFilters = () => {
     onSearchChange('');
@@ -139,6 +171,24 @@ export const BusinessFiltersComponent: React.FC<BusinessFiltersComponentProps> =
           {pipelineStatuses.map((status) => (
             <SelectItem key={status.value} value={status.value}>
               {status.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Website/Scrape filter */}
+      <Select
+        value={getBooleanFilterValue()}
+        onValueChange={handleBooleanFilterChange}
+      >
+        <SelectTrigger className="w-full sm:w-36">
+          <SelectValue placeholder="Website/Scrape" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All</SelectItem>
+          {booleanFilters.map((filter) => (
+            <SelectItem key={filter.value} value={filter.value}>
+              {filter.label}
             </SelectItem>
           ))}
         </SelectContent>
