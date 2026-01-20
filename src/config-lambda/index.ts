@@ -9,7 +9,7 @@ import {
   BatchWriteCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { parse } from 'csv-parse/sync';
@@ -661,6 +661,8 @@ async function importBusinesses(body?: string): Promise<APIGatewayProxyResultV2>
 async function exportBusinesses(
   queryParams?: Record<string, string | undefined>
 ): Promise<APIGatewayProxyResultV2> {
+  const startTime = Date.now();
+  
   // Parse selected columns from query params (comma-separated)
   const selectedColumns = queryParams?.columns?.split(',').filter(c => c.trim()) || [];
   
@@ -668,25 +670,61 @@ async function exportBusinesses(
   const filterRulesParam = queryParams?.filterRules;
   const filterRules: FilterRule[] = filterRulesParam ? JSON.parse(decodeURIComponent(filterRulesParam)) : [];
   
-  // Scan all items (for small datasets; paginate for larger)
+  // Check if we can use a GSI for the primary filter
+  const businessTypeRule = filterRules.find(r => r.field === 'business_type' && r.operator === 'EQUALS');
+  const remainingRules = filterRules.filter(r => r !== businessTypeRule);
+  
   let items: Business[] = [];
   let lastKey: Record<string, unknown> | undefined;
   
-  do {
-    const command = new ScanCommand({
-      TableName: TABLE_NAME,
-      ExclusiveStartKey: lastKey,
-    });
-    
-    const result = await docClient.send(command);
-    items.push(...(result.Items as Business[] || []));
-    lastKey = result.LastEvaluatedKey;
-  } while (lastKey);
+  // Use GSI for business_type filter if available (much faster)
+  if (businessTypeRule?.value) {
+    console.log(`Using GSI for business_type: ${businessTypeRule.value}`);
+    do {
+      const command = new QueryCommand({
+        TableName: TABLE_NAME,
+        IndexName: 'by-type-state',
+        KeyConditionExpression: '#bt = :btVal',
+        ExpressionAttributeNames: { '#bt': 'business_type' },
+        ExpressionAttributeValues: { ':btVal': businessTypeRule.value.toLowerCase() },
+        ExclusiveStartKey: lastKey,
+      });
+      
+      const result = await docClient.send(command);
+      items.push(...(result.Items as Business[] || []));
+      lastKey = result.LastEvaluatedKey;
+      
+      // Log progress every 5000 items
+      if (items.length % 5000 === 0) {
+        console.log(`Fetched ${items.length} items...`);
+      }
+    } while (lastKey);
+  } else {
+    // Full table scan (slower)
+    console.log('No GSI filter available, using full table scan');
+    do {
+      const command = new ScanCommand({
+        TableName: TABLE_NAME,
+        ExclusiveStartKey: lastKey,
+      });
+      
+      const result = await docClient.send(command);
+      items.push(...(result.Items as Business[] || []));
+      lastKey = result.LastEvaluatedKey;
+      
+      if (items.length % 10000 === 0) {
+        console.log(`Scanned ${items.length} items...`);
+      }
+    } while (lastKey);
+  }
   
-  // Apply filter rules if provided
-  if (filterRules.length > 0) {
+  console.log(`Fetched ${items.length} items in ${Date.now() - startTime}ms`);
+  
+  // Apply remaining filter rules if provided
+  if (remainingRules.length > 0) {
+    const beforeFilter = items.length;
     items = items.filter(item => {
-      return filterRules.every(rule => {
+      return remainingRules.every(rule => {
         const value = (item as Record<string, unknown>)[rule.field];
         switch (rule.operator) {
           case 'EXISTS':
@@ -702,10 +740,11 @@ async function exportBusinesses(
         }
       });
     });
+    console.log(`Filtered from ${beforeFilter} to ${items.length} items`);
   }
   
   if (items.length === 0) {
-    return response(200, '', { 'Content-Type': 'text/csv' });
+    return response(200, { downloadUrl: null, message: 'No items match the filter' });
   }
   
   // Get all unique columns from data
@@ -716,14 +755,46 @@ async function exportBusinesses(
     ? selectedColumns.filter(c => allColumns.includes(c))
     : allColumns;
   
+  console.log(`Generating CSV with ${columns.length} columns for ${items.length} items...`);
+  
   const csv = stringify(items, {
     header: true,
     columns,
   });
   
-  return response(200, csv, { 
-    'Content-Type': 'text/csv',
-    'Content-Disposition': `attachment; filename="businesses_${Date.now()}.csv"`,
+  console.log(`CSV size: ${(csv.length / 1024 / 1024).toFixed(2)} MB`);
+  
+  // For large exports, upload to S3 and return a signed URL
+  const timestamp = Date.now();
+  const s3Key = `exports/businesses_${timestamp}.csv`;
+  
+  await s3Client.send(new PutObjectCommand({
+    Bucket: CAMPAIGN_DATA_BUCKET,
+    Key: s3Key,
+    Body: csv,
+    ContentType: 'text/csv',
+    ContentDisposition: `attachment; filename="businesses_${timestamp}.csv"`,
+  }));
+  
+  // Generate a signed URL valid for 1 hour
+  const downloadUrl = await getSignedUrl(
+    s3Client,
+    new GetObjectCommand({
+      Bucket: CAMPAIGN_DATA_BUCKET,
+      Key: s3Key,
+    }),
+    { expiresIn: 3600 }
+  );
+  
+  const totalTime = Date.now() - startTime;
+  console.log(`Export complete in ${totalTime}ms`);
+  
+  return response(200, {
+    downloadUrl,
+    itemCount: items.length,
+    columns: columns.length,
+    sizeBytes: csv.length,
+    generatedAt: new Date().toISOString(),
   });
 }
 

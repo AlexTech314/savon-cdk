@@ -211,23 +211,30 @@ export function ExportWizard({ open, onClose }: ExportWizardProps) {
         ? Array.from(selectedColumns)
         : undefined; // undefined = export all
       
-      const csv = await exportBusinesses(
+      const result = await exportBusinesses(
         columnsToExport,
         filterRules.length > 0 ? filterRules : undefined
       );
       
-      // Download the CSV
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
+      if (!result.downloadUrl) {
+        toast({
+          title: 'No Data',
+          description: result.message || 'No items match the filter criteria.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      
+      // Download from the signed URL
       const a = document.createElement('a');
-      a.href = url;
+      a.href = result.downloadUrl;
       a.download = `businesses_export_${Date.now()}.csv`;
       a.click();
-      URL.revokeObjectURL(url);
       
+      const sizeMB = result.sizeBytes ? (result.sizeBytes / 1024 / 1024).toFixed(2) : 'unknown';
       toast({
         title: 'Export Complete',
-        description: `Exported ${selectedColumns.size > 0 ? selectedColumns.size : 'all'} columns${filterRules.length > 0 ? ` with ${filterRules.length} filter(s)` : ''}.`,
+        description: `Exported ${result.itemCount?.toLocaleString() || 'unknown'} items (${sizeMB} MB).`,
       });
       
       handleClose();
@@ -235,7 +242,7 @@ export function ExportWizard({ open, onClose }: ExportWizardProps) {
       console.error('Export failed:', error);
       toast({
         title: 'Export Failed',
-        description: 'There was an error exporting the data.',
+        description: 'There was an error exporting the data. The request may have timed out for large datasets.',
         variant: 'destructive',
       });
     } finally {

@@ -86,17 +86,30 @@ const Businesses: React.FC = () => {
 
   const handleExport = async (filtered: boolean) => {
     try {
-      const csv = await exportBusinesses(filtered ? filters : undefined);
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
+      // Convert BusinessFilters to PipelineFilterRule[] for the export API
+      const filterRules = filtered && filters.business_type 
+        ? [{ field: 'business_type', operator: 'EQUALS' as const, value: filters.business_type }]
+        : undefined;
+      
+      const result = await exportBusinesses(undefined, filterRules);
+      
+      if (!result.downloadUrl) {
+        toast({
+          title: 'No Data',
+          description: result.message || 'No items to export.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      
       const a = document.createElement('a');
-      a.href = url;
+      a.href = result.downloadUrl;
       a.download = `businesses_export_${Date.now()}.csv`;
       a.click();
-      URL.revokeObjectURL(url);
+      
       toast({
         title: 'Export Complete',
-        description: 'CSV file downloaded successfully.',
+        description: `Exported ${result.itemCount?.toLocaleString() || ''} items.`,
       });
     } catch {
       toast({

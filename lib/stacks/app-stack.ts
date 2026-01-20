@@ -643,8 +643,8 @@ export class AppStack extends cdk.Stack {
       code: lambda.DockerImageCode.fromImageAsset(
         path.join(__dirname, '../../src/config-lambda')
       ),
-      timeout: cdk.Duration.seconds(29), // Max for API Gateway (on-demand preview generation)
-      memorySize: 512,
+      timeout: cdk.Duration.minutes(5), // Extended for large exports (S3 upload)
+      memorySize: 1024, // Increased for large dataset processing
       logGroup: configLogGroup,
       environment: {
         BUSINESSES_TABLE_NAME: businessesTable.tableName,
@@ -659,7 +659,7 @@ export class AppStack extends cdk.Stack {
     });
 
     businessesTable.grantReadWriteData(configLambda);
-    campaignDataBucket.grantRead(configLambda);
+    campaignDataBucket.grantReadWrite(configLambda); // Write access for CSV exports
     claudeSecret.grantRead(configLambda);
     googleSecretOriginal.grantRead(configLambda);
     googleSecretOutreach.grantRead(configLambda);
