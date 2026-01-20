@@ -43,6 +43,158 @@ interface TeamMember {
   source_url: string;
 }
 
+// Extracted scrape data structure
+interface ExtractedScrapeData {
+  place_id: string;
+  website_uri: string;
+  extracted_at: string;
+  contacts: {
+    emails: string[];
+    phones: string[];
+    contact_page_url: string | null;
+    social: {
+      linkedin?: string;
+      facebook?: string;
+      instagram?: string;
+      twitter?: string;
+    };
+  };
+  team: {
+    members: TeamMember[];
+    headcount_estimate: number | null;
+    headcount_source: string | null;
+    new_hire_mentions: { text: string; source_url: string }[];
+  };
+  acquisition: {
+    signals: { text: string; signal_type: string; source_url: string }[];
+    has_signal: boolean;
+    summary: string | null;
+  };
+  history: {
+    founded_year: number | null;
+    founded_source: string | null;
+    years_in_business: number | null;
+    snippets: { text: string; source_url: string }[];
+  };
+}
+
+// Pretty formatted display for extracted scrape data
+const ExtractedDataPreview: React.FC<{ data: ExtractedScrapeData }> = ({ data }) => {
+  const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+    <div className="space-y-2">
+      <h4 className="text-sm font-semibold text-primary">{title}</h4>
+      <div className="pl-3 border-l-2 border-border space-y-1">{children}</div>
+    </div>
+  );
+
+  const Field: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+    <div className="flex gap-2 text-sm">
+      <span className="text-muted-foreground min-w-[100px]">{label}:</span>
+      <span className="text-foreground">{value || <span className="text-muted-foreground italic">None</span>}</span>
+    </div>
+  );
+
+  const List: React.FC<{ items: string[] }> = ({ items }) => (
+    items.length > 0 ? (
+      <ul className="list-disc list-inside text-sm space-y-0.5">
+        {items.map((item, i) => <li key={i} className="break-all">{item}</li>)}
+      </ul>
+    ) : <span className="text-sm text-muted-foreground italic">None found</span>
+  );
+
+  return (
+    <div className="p-4 bg-muted/50 rounded-lg space-y-4 max-h-[500px] overflow-auto">
+      {/* Header */}
+      <div className="text-xs text-muted-foreground">
+        Extracted {format(new Date(data.extracted_at), 'MMM d, yyyy h:mm a')} from{' '}
+        <a href={data.website_uri} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+          {data.website_uri}
+        </a>
+      </div>
+
+      {/* Contacts */}
+      <Section title="Contacts">
+        <Field label="Emails" value={data.contacts.emails.length > 0 ? <List items={data.contacts.emails} /> : null} />
+        <Field label="Phones" value={data.contacts.phones.length > 0 ? <List items={data.contacts.phones} /> : null} />
+        <Field label="Contact Page" value={
+          data.contacts.contact_page_url ? (
+            <a href={data.contacts.contact_page_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline break-all">
+              {data.contacts.contact_page_url}
+            </a>
+          ) : null
+        } />
+        {Object.entries(data.contacts.social).filter(([, v]) => v).length > 0 && (
+          <div className="space-y-1">
+            <span className="text-muted-foreground text-sm">Social:</span>
+            <div className="flex flex-wrap gap-2 pl-2">
+              {Object.entries(data.contacts.social).map(([platform, url]) => url && (
+                <a key={platform} href={url} target="_blank" rel="noopener noreferrer" 
+                   className="text-xs px-2 py-1 bg-background rounded border hover:border-primary capitalize">
+                  {platform}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
+      </Section>
+
+      {/* Team */}
+      <Section title="Team">
+        <Field label="Headcount" value={data.team.headcount_estimate ? `~${data.team.headcount_estimate} (${data.team.headcount_source})` : null} />
+        {data.team.members.length > 0 && (
+          <div className="space-y-1">
+            <span className="text-muted-foreground text-sm">Members ({data.team.members.length}):</span>
+            <div className="space-y-1 pl-2">
+              {data.team.members.slice(0, 10).map((m, i) => (
+                <div key={i} className="text-sm">
+                  <span className="font-medium">{m.name}</span>
+                  <span className="text-muted-foreground"> — {m.title}</span>
+                </div>
+              ))}
+              {data.team.members.length > 10 && (
+                <span className="text-xs text-muted-foreground">...and {data.team.members.length - 10} more</span>
+              )}
+            </div>
+          </div>
+        )}
+        {data.team.new_hire_mentions.length > 0 && (
+          <Field label="New Hires" value={`${data.team.new_hire_mentions.length} mention(s)`} />
+        )}
+      </Section>
+
+      {/* Acquisition */}
+      <Section title="Acquisition Signals">
+        <Field label="Has Signal" value={data.acquisition.has_signal ? '✓ Yes' : 'No'} />
+        {data.acquisition.signals.length > 0 && (
+          <div className="space-y-1">
+            {data.acquisition.signals.map((s, i) => (
+              <div key={i} className="text-sm p-2 bg-background rounded">
+                <Badge variant="outline" className="mb-1 capitalize">{s.signal_type}</Badge>
+                <p className="text-xs">{s.text}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {data.acquisition.summary && <Field label="Summary" value={data.acquisition.summary} />}
+      </Section>
+
+      {/* History */}
+      <Section title="Business History">
+        <Field label="Founded" value={data.history.founded_year ? `${data.history.founded_year} (${data.history.founded_source})` : null} />
+        <Field label="Years in Business" value={data.history.years_in_business} />
+        {data.history.snippets.length > 0 && (
+          <div className="space-y-1">
+            <span className="text-muted-foreground text-sm">History Snippets:</span>
+            {data.history.snippets.slice(0, 3).map((s, i) => (
+              <p key={i} className="text-xs p-2 bg-background rounded italic">"{s.text}"</p>
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+};
+
 const BusinessDetailPage: React.FC = () => {
   const { place_id } = useParams<{ place_id: string }>();
   const navigate = useNavigate();
@@ -291,15 +443,15 @@ const BusinessDetailPage: React.FC = () => {
               </div>
 
               {business.website && (
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm text-muted-foreground">Website</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Globe className="h-4 w-4 text-muted-foreground" />
+                  <div className="flex items-start gap-2 mt-1">
+                    <Globe className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
                     <a
                       href={business.website}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-sm text-primary hover:underline"
+                      className="text-sm text-primary hover:underline break-all"
                     >
                       {business.website}
                     </a>
@@ -642,9 +794,7 @@ const BusinessDetailPage: React.FC = () => {
                     Close Preview
                   </Button>
                 </div>
-                <pre className="p-4 bg-muted rounded-lg text-xs overflow-auto max-h-96">
-                  {JSON.stringify(extractedPreview, null, 2)}
-                </pre>
+                <ExtractedDataPreview data={extractedPreview as ExtractedScrapeData} />
               </div>
             )}
           </CardContent>
