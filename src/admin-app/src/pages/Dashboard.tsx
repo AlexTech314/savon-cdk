@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getStats } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import {
   ChartContainer,
   ChartTooltip,
@@ -22,34 +23,45 @@ import {
   FileText,
   Briefcase,
   Clock,
+  RefreshCw,
 } from 'lucide-react';
 import { formatDistanceToNow, format, parseISO } from 'date-fns';
 
 const Dashboard: React.FC = () => {
-  const { data: stats, isLoading } = useQuery({
+  const [statsEnabled, setStatsEnabled] = useState(false);
+  
+  const { data: stats, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['stats'],
     queryFn: getStats,
-    refetchInterval: 30000,
+    enabled: statsEnabled, // Only fetch when explicitly enabled
+    refetchInterval: statsEnabled ? 30000 : false,
   });
+
+  const handleLoadStats = () => {
+    setStatsEnabled(true);
+    if (stats) {
+      refetch();
+    }
+  };
 
   const statCards = [
     {
       title: 'Total Businesses',
-      value: stats?.totalBusinesses ?? 0,
+      value: stats?.totalBusinesses ?? '—',
       icon: Building2,
       color: 'text-primary',
       bgColor: 'bg-primary/10',
     },
     {
       title: 'Missing Preview',
-      value: stats?.businessesMissingCopy ?? 0,
+      value: stats?.businessesMissingCopy ?? '—',
       icon: FileText,
       color: 'text-warning',
       bgColor: 'bg-warning/10',
     },
     {
       title: 'Active Jobs',
-      value: stats?.activeJobs ?? 0,
+      value: stats?.activeJobs ?? '—',
       icon: Briefcase,
       color: 'text-accent',
       bgColor: 'bg-accent/10',
@@ -58,7 +70,7 @@ const Dashboard: React.FC = () => {
       title: 'Last Job Run',
       value: stats?.lastJobRun
         ? formatDistanceToNow(new Date(stats.lastJobRun), { addSuffix: true })
-        : 'Never',
+        : '—',
       icon: Clock,
       color: 'text-muted-foreground',
       bgColor: 'bg-muted',
@@ -92,11 +104,23 @@ const Dashboard: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Overview of your businesses and pipeline jobs
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Overview of your businesses and pipeline jobs
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleLoadStats}
+          disabled={isLoading || isFetching}
+          className="gap-2"
+        >
+          <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+          {!statsEnabled ? 'Load Stats' : isFetching ? 'Loading...' : 'Refresh'}
+        </Button>
       </div>
 
       {/* Stats grid */}

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { getBusinesses, deleteBusinesses, exportBusinesses } from '@/lib/api';
+import { getBusinesses, deleteBusinesses, exportBusinesses, PipelineFilterRule } from '@/lib/api';
 import { Business, BusinessFilters } from '@/lib/types';
 import { BusinessFiltersComponent } from '@/components/businesses/BusinessFilters';
 import { BusinessTable } from '@/components/businesses/BusinessTable';
@@ -24,7 +24,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { ChevronDown, Download, Trash2, Play } from 'lucide-react';
+import { ChevronDown, Download, Trash2, Play, Hash, Loader2 } from 'lucide-react';
 
 const Businesses: React.FC = () => {
   const navigate = useNavigate();
@@ -39,6 +39,8 @@ const Businesses: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
+  const [explicitCount, setExplicitCount] = useState<number | null>(null);
+  const [isCountLoading, setIsCountLoading] = useState(false);
 
   const limit = 20;
 
@@ -129,15 +131,83 @@ const Businesses: React.FC = () => {
     setDeleteDialogOpen(false);
   };
 
+  // Convert BusinessFilters to PipelineFilterRule[] for count API
+  const buildFilterRules = (): PipelineFilterRule[] => {
+    const rules: PipelineFilterRule[] = [];
+    if (filters.business_type) {
+      rules.push({ field: 'business_type', operator: 'EQUALS', value: filters.business_type });
+    }
+    if (filters.state) {
+      rules.push({ field: 'state', operator: 'EQUALS', value: filters.state });
+    }
+    if (filters.has_website === true) {
+      rules.push({ field: 'has_website', operator: 'EQUALS', value: 'true' });
+    } else if (filters.has_website === false) {
+      rules.push({ field: 'has_website', operator: 'NOT_EXISTS', value: '' });
+    }
+    if (filters.web_scraped === true) {
+      rules.push({ field: 'web_scraped', operator: 'EQUALS', value: 'true' });
+    } else if (filters.web_scraped === false) {
+      rules.push({ field: 'web_scraped', operator: 'NOT_EXISTS', value: '' });
+    }
+    return rules;
+  };
+
+  const fetchCount = async () => {
+    setIsCountLoading(true);
+    try {
+      // Use export endpoint with empty columns to get count quickly
+      // This uses GSIs when filters are active
+      const filterRules = buildFilterRules();
+      const result = await exportBusinesses([], filterRules.length > 0 ? filterRules : undefined);
+      setExplicitCount(result.itemCount ?? null);
+    } catch (error) {
+      console.error('Failed to fetch count:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to fetch count.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCountLoading(false);
+    }
+  };
+
+  // Reset explicit count when filters change
+  React.useEffect(() => {
+    setExplicitCount(null);
+  }, [filters, search]);
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Page header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Businesses</h1>
-          <p className="text-muted-foreground">
-            {data?.countIsApproximate ? '~' : ''}{data?.total ?? 0} total businesses
-          </p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Businesses</h1>
+            <p className="text-muted-foreground text-sm">
+              {explicitCount !== null ? (
+                <>{explicitCount.toLocaleString()} businesses</>
+              ) : (
+                <>Page {page} • {data?.data?.length ?? 0} shown</>
+              )}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={fetchCount}
+            disabled={isCountLoading}
+            className="gap-1 text-xs h-7"
+            title="Get total count"
+          >
+            {isCountLoading ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Hash className="h-3 w-3" />
+            )}
+            {isCountLoading ? 'Counting...' : 'Count'}
+          </Button>
         </div>
 
         <div className="flex gap-2">
