@@ -274,13 +274,16 @@ async function updateJobMetrics(
       TableName: JOBS_TABLE_NAME,
       Key: { job_id: jobId },
       UpdateExpression: `SET 
-        metrics.#step = :metrics,
-        metrics.scrape_batches = :batches,
-        metrics.scrape_batches_succeeded = :succeeded,
-        metrics.scrape_batches_failed = :failed`,
-      ExpressionAttributeNames: { '#step': 'scrape' },
+        #metrics.#step = :metricsVal,
+        #metrics.scrape_batches = :batches,
+        #metrics.scrape_batches_succeeded = :succeeded,
+        #metrics.scrape_batches_failed = :failed`,
+      ExpressionAttributeNames: { 
+        '#metrics': 'metrics',  // 'metrics' is a DynamoDB reserved keyword
+        '#step': 'scrape' 
+      },
       ExpressionAttributeValues: {
-        ':metrics': metrics,
+        ':metricsVal': metrics,
         ':batches': totalBatches,
         ':succeeded': successfulBatches,
         ':failed': failedBatches,

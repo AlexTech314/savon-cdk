@@ -236,9 +236,12 @@ export async function updateJobMetrics(
     await docClient.send(new UpdateCommand({
       TableName: JOBS_TABLE_NAME,
       Key: { job_id: jobId },
-      UpdateExpression: 'SET metrics.#step = :metrics',
-      ExpressionAttributeNames: { '#step': 'scrape' },
-      ExpressionAttributeValues: { ':metrics': metrics },
+      UpdateExpression: 'SET #metrics.#step = :metricsVal',
+      ExpressionAttributeNames: { 
+        '#metrics': 'metrics',  // 'metrics' is a DynamoDB reserved keyword
+        '#step': 'scrape' 
+      },
+      ExpressionAttributeValues: { ':metricsVal': metrics },
     }));
     console.log(`Updated job metrics for ${jobId}`);
   } catch (error) {
