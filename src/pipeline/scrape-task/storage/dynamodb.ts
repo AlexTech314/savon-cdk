@@ -125,6 +125,7 @@ export async function updateBusinessWithScrapeData(
   const updateFields: Record<string, unknown> = {
     // Core scrape status
     web_scraped: true,
+    web_scraped_str: 'true', // String version for GSI
     web_scraped_at: new Date().toISOString(),
     
     // S3 references
@@ -207,9 +208,10 @@ export async function markBusinessScrapeFailed(placeId: string): Promise<void> {
     await docClient.send(new UpdateCommand({
       TableName: BUSINESSES_TABLE_NAME,
       Key: { place_id: placeId },
-      UpdateExpression: 'SET web_scraped = :true, web_scrape_status = :status, web_scraped_at = :at',
+      UpdateExpression: 'SET web_scraped = :true, web_scraped_str = :trueStr, web_scrape_status = :status, web_scraped_at = :at',
       ExpressionAttributeValues: {
         ':true': true,
+        ':trueStr': 'true', // String version for GSI
         ':status': 'failed',
         ':at': new Date().toISOString(),
       },

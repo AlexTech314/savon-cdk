@@ -237,9 +237,10 @@ async function listBusinesses(
   const stateFilter = queryParams?.state;
   const pipelineStatusFilter = queryParams?.pipeline_status;
   const hasWebsiteFilter = queryParams?.has_website;
+  const webScrapedFilter = queryParams?.web_scraped; // "true" or "false"
   
   // Check if any filters are active (excluding free text search)
-  const hasStructuredFilters = businessTypeFilter || stateFilter || pipelineStatusFilter || hasWebsiteFilter;
+  const hasStructuredFilters = businessTypeFilter || stateFilter || pipelineStatusFilter || hasWebsiteFilter || webScrapedFilter;
   const hasAnyFilters = searchTerm || hasStructuredFilters;
 
   let items: Record<string, unknown>[] = [];
@@ -291,7 +292,7 @@ async function listBusinesses(
   // GSI PATH: Use GSI for single structured filter (no free text search)
   // Uses native DynamoDB pagination for efficiency
   if (hasStructuredFilters && !searchTerm) {
-    // Priority: pipeline_status > has_website > state > business_type
+    // Priority: pipeline_status > web_scraped > has_website > state > business_type
     // Pick the most selective GSI and use native pagination
     
     let gsiResult: PaginatedGSIResult | null = null;
@@ -302,6 +303,9 @@ async function listBusinesses(
       const statusValue = pipelineStatusFilter === 'copy' ? 'complete' : pipelineStatusFilter;
       gsiResult = await queryGSIPaginated('by-pipeline-status', 'pipeline_status', statusValue, page, limit);
       // Check if we also need to filter by other criteria
+      needsSecondaryFilter = !!(businessTypeFilter || stateFilter || hasWebsiteFilter || webScrapedFilter);
+    } else if (webScrapedFilter !== undefined) {
+      gsiResult = await queryGSIPaginated('by-web-scraped', 'web_scraped_str', webScrapedFilter, page, limit);
       needsSecondaryFilter = !!(businessTypeFilter || stateFilter || hasWebsiteFilter);
     } else if (hasWebsiteFilter !== undefined) {
       gsiResult = await queryGSIPaginated('by-has-website', 'has_website_str', hasWebsiteFilter, page, limit);
@@ -329,6 +333,8 @@ async function listBusinesses(
         if (pipelineStatusFilter) {
           const statusValue = pipelineStatusFilter === 'copy' ? 'complete' : pipelineStatusFilter;
           allItems = await queryGSI('by-pipeline-status', 'pipeline_status', statusValue);
+        } else if (webScrapedFilter !== undefined) {
+          allItems = await queryGSI('by-web-scraped', 'web_scraped_str', webScrapedFilter);
         } else if (hasWebsiteFilter !== undefined) {
           allItems = await queryGSI('by-has-website', 'has_website_str', hasWebsiteFilter);
         } else {
@@ -341,14 +347,18 @@ async function listBusinesses(
             String(item.business_type || '').toLowerCase() === businessTypeFilter.toLowerCase()
           );
         }
-        if (stateFilter && pipelineStatusFilter) {
+        if (stateFilter && (pipelineStatusFilter || webScrapedFilter)) {
           allItems = allItems.filter(item => 
             String(item.state || '').toUpperCase() === stateFilter.toUpperCase()
           );
         }
-        if (hasWebsiteFilter !== undefined && pipelineStatusFilter) {
+        if (hasWebsiteFilter !== undefined && (pipelineStatusFilter || webScrapedFilter)) {
           const hasWebsite = hasWebsiteFilter === 'true';
           allItems = allItems.filter(item => hasWebsite ? item.has_website : !item.has_website);
+        }
+        if (webScrapedFilter !== undefined && pipelineStatusFilter) {
+          const scraped = webScrapedFilter === 'true';
+          allItems = allItems.filter(item => scraped ? item.web_scraped : !item.web_scraped);
         }
         
         totalCount = allItems.length;

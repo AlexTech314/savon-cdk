@@ -152,6 +152,7 @@ export interface BusinessFilters {
   has_copy?: boolean | null;
   pipeline_status?: PipelineStatus;
   has_website?: boolean | null;
+  web_scraped?: boolean | null;
 }
 
 export interface JobFilters {

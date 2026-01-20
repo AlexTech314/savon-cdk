@@ -179,6 +179,9 @@ export const getBusinesses = async (params: {
   if (filters?.has_website !== null && filters?.has_website !== undefined) {
     queryParams.set('has_website', String(filters.has_website));
   }
+  if (filters?.web_scraped !== null && filters?.web_scraped !== undefined) {
+    queryParams.set('web_scraped', String(filters.web_scraped));
+  }
 
   const response = await apiClient<{
     items: BackendBusiness[];

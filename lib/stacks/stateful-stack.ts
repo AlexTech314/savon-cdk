@@ -58,6 +58,17 @@ export class StatefulStack extends cdk.Stack {
       sortKey: { name: 'business_name', type: dynamodb.AttributeType.STRING },
     });
 
+    // GSI for filtering by web_scraped status (string "true" or "false")
+    // NOTE: Only 1 GSI can be added per deployment. Add others in subsequent deploys:
+    // - by-has-reviews (has_reviews_str)
+    // - by-has-photos (has_photos_str)
+    // - by-has-copy (has_copy_str)
+    this.businessesTable.addGlobalSecondaryIndex({
+      indexName: 'by-web-scraped',
+      partitionKey: { name: 'web_scraped_str', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'business_name', type: dynamodb.AttributeType.STRING },
+    });
+
     // ============================================================
     // Jobs Table
     // ============================================================
